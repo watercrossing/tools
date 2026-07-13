@@ -5,7 +5,7 @@ Each tool lives in its own folder and stands alone — no shared build step, no 
 
 ## Formatting
 
-- **Code**: keep lines to a maximum length of 153 characters.
+- **Code**: keep lines to a maximum length of 153 characters. Do use that width. Don't be overly verbose in code, comment sensibly. Use generator- and list-comprehensions liberally.
 - **Markdown and other text files**: no line-length limit. Write one sentence per line (a semantic line break after each sentence) and let the editor soft-wrap long lines, rather than hard-wrapping mid-sentence. Same applies to commit message. 
 
 ## Commits
@@ -30,7 +30,7 @@ tools/
 ## Python tools
 
 Write Python tools as a single file that runs under [uv](https://docs.astral.sh/uv/).
-Every Python tool starts with this shebang and inline script-metadata block:
+Every Python tool starts with this shebang and PEP 723 inline-dependency:
 
 ```python
 #!/usr/bin/env -S uv run --script
