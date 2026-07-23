@@ -72,6 +72,7 @@ Examples below use `tools` / `watercrossing/tools` / `tools.example.com`; substi
    Alias "/github-webhook/tools" "/var/www/tools/update-scripts"
    <Directory "/var/www/tools/update-scripts">
        AllowOverride None
+       Options -Indexes
        Require all granted
    </Directory>
    ```

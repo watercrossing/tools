@@ -45,6 +45,13 @@ if ($base_dir === '' || $secret === '' || $repo === '' || $branch === '') {
     die("Server misconfigured: deploy.conf is missing or incomplete\n");
 }
 
+// Refuse to run with the shipped placeholder — otherwise the endpoint would
+// accept a publicly-known secret and let anyone trigger a deploy.
+if ($secret === 'REPLACE_WITH_A_LONG_RANDOM_STRING') {
+    http_response_code(500);
+    die("Server misconfigured: WEBHOOK_SECRET is still the placeholder — set a real secret\n");
+}
+
 define('LOGFILE', $base_dir . '/deploy.log');
 $cmd = escapeshellarg($base_dir . '/update.sh')
      . ' >> ' . escapeshellarg($base_dir . '/deploy-cmd.log') . ' 2>&1';
