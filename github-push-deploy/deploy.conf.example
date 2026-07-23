@@ -1,0 +1,29 @@
+# github-push-deploy configuration.
+#
+# Copy this file to $BASE_DIR/deploy.conf (e.g. /var/www/tools/deploy.conf),
+# fill in the values, then keep it OUTSIDE the web root and OUTSIDE the repo so
+# it is never served publicly and never overwritten by a deploy.
+#
+# It is read both by update.sh (POSIX shell `source`) and by
+# github-hook-listener.php, so keep it to plain KEY="value" lines with comments
+# only on their own line (no trailing inline comments).
+
+# Base directory for this site. Holds html/, update-scripts/, repo/ and this file.
+BASE_DIR="/var/www/tools"
+
+# The GitHub repository allowed to trigger a deploy, as "owner/name".
+REPO_FULL_NAME="watercrossing/tools"
+
+# Only pushes to this branch trigger a deploy.
+BRANCH="main"
+
+# Git URL used to clone the repo. Can be an SSH alias configured in the deploy
+# user's ~/.ssh/config (e.g. gh:owner/name.git) or a full https/ssh URL.
+CLONE_URL="gh:watercrossing/tools.git"
+
+# Path to the deploy script, relative to the repository root.
+DEPLOY_SCRIPT="github-push-deploy/deploy.sh"
+
+# The webhook secret. Must match the "Secret" set on the GitHub webhook.
+# Generate one with:  openssl rand -hex 32
+WEBHOOK_SECRET="REPLACE_WITH_A_LONG_RANDOM_STRING"
