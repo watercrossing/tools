@@ -52,7 +52,7 @@ Declare any third-party dependencies (Click, sqlite-utils, …) in the same bloc
 # ///
 ```
 
-This lets anyone run the tool with `uv run tool.py` — or `./tool.py` after `chmod +x` — with uv fetching the right Python and dependencies automatically and no virtualenv to manage.
+This lets anyone run the tool with `uv run tool.py` or `./tool.py` (make sure suitable tools are committed with `chmod +x`). Uv will fetch the right Python and dependencies automatically and no virtualenv to manage.
 
 ## Web tools (HTML + JS)
 
