@@ -1,0 +1,143 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.13"
+# dependencies = ["pytest"]
+# ///
+"""
+Tests for repo-web-view.py.
+
+Each test drives the real CLI end-to-end via `uv run repo-web-view.py`, so the tool's
+own inline dependencies are exercised exactly as a user would run them.
+
+    uv run tests/test_repo_web_view.py       # self-contained (installs pytest via uv)
+    pytest tests/                            # if pytest is already available
+"""
+import socket, subprocess, sys, time, urllib.request
+from pathlib import Path
+
+import pytest
+
+SCRIPT = Path(__file__).resolve().parent.parent / "repo-web-view.py"
+
+
+@pytest.fixture
+def sample_repo(tmp_path):
+    src = tmp_path / "repo"
+    (src / "toolA").mkdir(parents=True)
+    (src / ".git").mkdir()
+    (src / "README.md").write_text("# Sample\n\nWelcome to **sample**. See [toolA](toolA/) and [notes](notes.txt).\n",
+                                   encoding="utf-8")
+    (src / "notes.txt").write_text("plain file\n", encoding="utf-8")
+    (src / "hook.php").write_text('<?php echo "SHOULD NOT RUN"; ?>\n', encoding="utf-8")
+    (src / ".git" / "config").write_text("secret\n", encoding="utf-8")
+    (src / "toolA" / "README.md").write_text("# toolA\n\n```python\nprint('hi')\n```\n", encoding="utf-8")
+    (src / "toolA" / "toolA.py").write_text("print('hi')\n", encoding="utf-8")
+    (src / "toolA" / "toolA.html").write_text("<!doctype html><h1>toolA runs</h1>", encoding="utf-8")
+    return src
+
+
+def build(src, out, *extra):
+    return subprocess.run(["uv", "run", str(SCRIPT), str(src), str(out), "--force", *extra],
+                          capture_output=True, text=True)
+
+
+def test_generates_index_per_dir(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    assert build(sample_repo, out).returncode == 0
+    assert (out / "index.html").is_file()
+    assert (out / "toolA" / "index.html").is_file()
+
+
+def test_root_renders_readme_and_lists(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out)
+    page = (out / "index.html").read_text(encoding="utf-8")
+    assert "<h1" in page and "Sample" in page      # README rendered above the listing
+    assert 'href="toolA/"' in page                 # subdir link keeps trailing slash -> renders
+    assert 'href="notes.txt"' in page              # file link (no slash) -> downloads
+
+
+def test_dotfiles_excluded(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out)
+    assert not (out / ".git").exists()
+    assert ".git" not in (out / "index.html").read_text(encoding="utf-8")
+
+
+def test_extra_exclude_glob(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out, "--exclude", "*.txt")
+    assert not (out / "notes.txt").exists()
+
+
+def test_code_block_highlighted(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out)
+    assert 'class="hl' in (out / "toolA" / "index.html").read_text(encoding="utf-8")
+
+
+def test_htaccess_written(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out)
+    ht = (out / ".htaccess").read_text(encoding="utf-8")
+    assert "attachment" in ht and "inline" in ht      # files download, .html renders
+    assert "html" in ht.lower()
+    assert "RemoveHandler" in ht and "SetHandler default-handler" in ht   # scripts don't execute
+
+
+def test_no_htaccess_flag(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out, "--no-htaccess")
+    assert not (out / ".htaccess").exists()
+
+
+def test_nested_output_rejected(sample_repo):
+    r = build(sample_repo, sample_repo / "site")
+    assert r.returncode != 0
+    assert "nested" in (r.stderr + r.stdout).lower()
+
+
+def _free_port():
+    with socket.socket() as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def _wait(url, timeout=90):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            urllib.request.urlopen(url, timeout=1).read()
+            return
+        except Exception:
+            time.sleep(0.3)
+    raise RuntimeError(f"server did not start: {url}")
+
+
+def test_serve_forces_file_download_but_renders_folder(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    port = _free_port()
+    proc = subprocess.Popen(["uv", "run", str(SCRIPT), str(sample_repo), str(out),
+                             "--force", "--serve", str(port)])
+    try:
+        base = f"http://localhost:{port}"
+        _wait(base + "/")
+        with urllib.request.urlopen(base + "/notes.txt") as r:          # a plain file downloads
+            assert "attachment" in (r.headers.get("Content-Disposition") or "")
+        with urllib.request.urlopen(base + "/hook.php") as r:           # a script downloads raw, un-executed
+            assert "attachment" in (r.headers.get("Content-Disposition") or "")
+            assert "<?php" in r.read().decode()
+        with urllib.request.urlopen(base + "/toolA/toolA.html") as r:   # an .html tool renders inline
+            assert "attachment" not in (r.headers.get("Content-Disposition") or "")
+            assert "toolA runs" in r.read().decode()
+        with urllib.request.urlopen(base + "/") as r:                   # a folder renders inline
+            body = r.read().decode()
+            assert "attachment" not in (r.headers.get("Content-Disposition") or "")
+        assert "<h1" in body
+    finally:
+        proc.terminate()
+        proc.wait(timeout=15)
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-v"]))

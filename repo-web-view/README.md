@@ -1,0 +1,106 @@
+# repo-web-view
+
+Publish a directory tree (a repo, a folder of docs) as a **static, GitHub-style browsable site**.
+For every folder it generates an `index.html` that shows the folder's **rendered `README.md`** at the top, and **below it a listing** of that folder's contents.
+Folders open as more rendered pages, and the repo's self-contained **`.html` tools open and run in the browser**; **every other file downloads** rather than displaying.
+
+It is built to sit behind plain **Apache + PHP-FPM** — the same "I have an SSH login and `/var/www`" box that [github-push-deploy](../github-push-deploy/) targets — and pairs with that tool as the *publish* step: a push regenerates the browsable site.
+
+## What it produces
+
+- One `index.html` per folder: breadcrumb → rendered `README.md` (if the folder has one) → a table listing the folder's entries (directories first, then files with sizes).
+- Fully **self-contained pages**: the CSS is inlined and any local images referenced by a README are embedded as `data:` URIs. Nothing the pages need is a separate file that could get caught by the download rule.
+- A single **`.htaccess`** at the root that (1) forces `Content-Disposition: attachment` on every file *except* `.html` — the generated index pages and the self-contained HTML tools, which render — and (2) disables server-side handlers (PHP-FPM, CGI, …) so a `.php`/`.cgi`/… in the tree downloads as source instead of executing. The whole download-vs-render policy lives in one place.
+
+Markdown is rendered with CommonMark + GitHub niceties: tables, strikethrough, task lists, autolinks, fenced code with **syntax highlighting** (Pygments), and GitHub-compatible heading anchors so in-page `#links` work.
+
+## Requirements
+
+- **[uv](https://docs.astral.sh/uv/)** — the script declares its Python and dependencies inline (PEP 723), so `uv run` fetches them into a throwaway env; there is nothing to install.
+- To get the download behaviour, **Apache with `mod_headers`** (the generated `.htaccess` needs it). Any static host will still serve the rendered pages; only the force-download depends on Apache.
+
+## Usage
+
+```bash
+uv run repo-web-view.py SOURCE OUTPUT        # or ./repo-web-view.py SOURCE OUTPUT
+```
+
+`SOURCE` is copied into `OUTPUT` (dotfiles skipped) and an `index.html` is generated in every folder.
+`OUTPUT` must be **outside** `SOURCE` (it may not be the same folder or nested inside it).
+
+Preview locally with a built-in server that mirrors the production download headers, so you can check that files download and folders render before deploying:
+
+```bash
+uv run repo-web-view.py . ../tools-site --serve      # http://localhost:8000
+```
+
+Rebuild over an existing output (what a deploy does) with `--force`:
+
+```bash
+uv run repo-web-view.py /var/www/tools/repo /var/www/tools/html --force
+```
+
+## Options
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--title NAME` | source folder name | Label for the root breadcrumb. |
+| `--exclude GLOB` | — | Filename glob to skip; repeatable. Dotfiles (`.git`, `.gitignore`, …) are always skipped. |
+| `--force` | off | Overwrite `OUTPUT` if it already exists (it is removed and rebuilt). |
+| `--no-htaccess` | off | Don't write the force-download `.htaccess` (e.g. you configure the rule in the vhost). |
+| `--serve [PORT]` | — | After building, serve `OUTPUT` with production-like download headers (default port `8000`). Put it last on the command line. |
+
+## Apache: making files download
+
+The generated `.htaccess` only takes effect if the directory allows those overrides. In your `<VirtualHost>`, on the served directory:
+
+```apache
+<Directory "/var/www/tools/html">
+    AllowOverride FileInfo Indexes
+    Require all granted
+</Directory>
+```
+
+If you'd rather not enable `.htaccess`, run with `--no-htaccess` and put the rules straight in that `<Directory>` block instead:
+
+```apache
+<Directory "/var/www/tools/html">
+    Require all granted
+    <IfModule mod_headers.c>
+        <FilesMatch ".">
+            Header set Content-Disposition "attachment"
+        </FilesMatch>
+        <FilesMatch "(?i)\.html?$">
+            Header set Content-Disposition "inline"
+        </FilesMatch>
+    </IfModule>
+    RemoveHandler .php .phtml .cgi .fcgi .pl .py .rb .lua .sh .shtml
+    <FilesMatch "(?i)\.(php[0-9]?|phtml|phps|phar|cgi|fcgi|pl|py|rb|lua|sh|shtml)$">
+        SetHandler default-handler
+    </FilesMatch>
+    DirectoryIndex index.html
+</Directory>
+```
+
+## Using it as the github-push-deploy publish step
+
+In your repo's [`github-push-deploy/deploy.sh`](../github-push-deploy/deploy.sh), replace the "Publish the site" copy block with a build into a fresh directory that is then swapped in with renames, so the live site is never served mid-rebuild:
+
+```bash
+# --- Publish the site (rendered, GitHub-style browsable view) ----------------
+rm -rf "$BASE_DIR/html-new" "$BASE_DIR/html-old"
+uv run repo-web-view/repo-web-view.py . "$BASE_DIR/html-new"
+if [ -d "$BASE_DIR/html" ]; then mv "$BASE_DIR/html" "$BASE_DIR/html-old"; fi
+mv "$BASE_DIR/html-new" "$BASE_DIR/html"
+rm -rf "$BASE_DIR/html-old"
+```
+
+The deploy user needs `uv` on its `PATH`. The single `repo-web-view` call produces the whole tree — copied files, the `index.html` pages, and the `.htaccess` — and the two renames swap it in near-atomically. (For a single build with no swap, run it straight at `"$BASE_DIR/html" --force`, which clears and rebuilds in place.)
+
+## Notes and limitations
+
+- **`.html` files render; every other file downloads.** The tools here are self-contained single HTML files, so exposing them to *run* in the browser is the whole point. If you have an HTML file you'd rather force to download, drop an `.htaccess` in its folder setting `Content-Disposition "attachment"` for that name. Note that a `.html` tool which pulls in *sibling* assets (a separate `.js`/`.css`) would have those download — but the repo convention is that web tools are single self-contained files, so this doesn't arise here.
+- **Nothing is executed server-side.** The `.htaccess` disables handlers (PHP-FPM, CGI, …) and serves scripts statically, so a `.php`/`.cgi`/… in the tree downloads as source instead of running. Caveat: if your PHP is wired with `SetHandler "proxy:…"` inside a `<FilesMatch>` in the vhost (some PHP-FPM setups), that can out-rank `.htaccess`; to be certain, also turn execution off for this `DocumentRoot` in the vhost.
+- **README images** are inlined only when they point at a **local file that exists**; remote (`http(s)`) and absolute (`/…`) image URLs are left untouched.
+- **No per-file commit info.** GitHub shows each file's last commit message and date; this shows name, type and size. Adding the commit columns would mean a `git log` per path — deliberately left out to keep the tool VCS-agnostic and fast.
+- **Syntax-highlight colours are tuned for light mode.** Pages otherwise adapt to the viewer's light/dark theme via `prefers-color-scheme`.
