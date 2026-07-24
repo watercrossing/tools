@@ -24,4 +24,4 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 
 ## Overleaf
 
-- **[overleaf-comments-export](overleaf-comments-export/)** — a Tampermonkey userscript that syncs Overleaf review comments into the LaTeX source as `\olc` macros (author, timestamp, highlighted span, comment), anchored where the comment sits, so they land in git. Idempotent via a per-line `%olcsync` marker (insert new, update changed, never duplicate); resolved threads skipped by default; one macro per reply. Writing is a real edit that propagates to collaborators, so it confirms first.
+- **[overleaf-comments-export](overleaf-comments-export/)** — a Tampermonkey userscript that syncs Overleaf review comments into the LaTeX source as `\olc` macros (author, timestamp, highlighted span, comment), each on its own line just above the line it annotates, so they land in git. Idempotent via a per-line `%olcsync` marker (insert new, update changed, never duplicate); resolved threads skipped by default; one macro per reply. Writing is a real edit that propagates to collaborators, so it confirms first.

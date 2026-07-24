@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Overleaf comments export (olc sync)
 // @namespace    https://github.com/ingolfbecker/tools
-// @version      0.1.0
+// @version      0.2.0
 // @description  Sync Overleaf review comments into the LaTeX source as \olc macros, idempotently, so they land in git.
 // @author       Ingolf Becker
 // @match        https://www.overleaf.com/project/*
@@ -33,6 +33,15 @@
     const s = str == null ? '' : String(str);
     if (mode === 'break') return s.replace(/[ \t]*(?:\r\n|\r|\n)+[ \t]*/g, ' \\\\ ').replace(/[ \t]+/g, ' ').trim();
     return s.replace(/(?:\r\n|\r|\n|\t| )+/g, ' ').trim();
+  }
+
+  // Shorten an over-long highlight for display/storage: with MORE than `max` words, keep the first
+  // and last `edge` words joined by an elision marker (`first two [...] last two`); otherwise return
+  // it unchanged. Input is assumed whitespace-collapsed (see collapseWhitespace) to single spaces.
+  function truncateWords(str, max = 5, edge = 2) {
+    const words = (str == null ? '' : String(str)).split(/\s+/).filter(Boolean);
+    if (words.length <= max) return words.join(' ');
+    return [...words.slice(0, edge), '[...]', ...words.slice(-edge)].join(' ');
   }
 
   // Format an epoch-ms timestamp as `D MMM, h:mm am/pm` (e.g. `13 May, 6:27 pm`). NEVER pass a
@@ -79,12 +88,15 @@
     return m ? { threadId: m[1], messageId: m[2], hash: m[3] } : null;
   }
 
-  // Render one \olc macro: \olc[date][author][highlight]{comment}. Accepts `comment` or, for
-  // annotation objects, falls back to their `text` field. Every argument is LaTeX-escaped.
+  // Render one \olc macro: \olc{date}{author}{highlight}{comment}. Brace args (not brackets) so it
+  // binds to a plain `\providecommand{\olc}[4]{...}` with no packages, and so `]`/`[` in the content
+  // (e.g. the `[...]` elision marker, or a `[1]` citation) can't prematurely close an argument.
+  // Accepts `comment` or, for annotation objects, falls back to their `text` field; every argument
+  // is LaTeX-escaped.
   function renderOlc(ann) {
     const body = ann.comment !== undefined ? ann.comment : (ann.text || '');
-    return `\\olc[${escapeLatex(ann.date)}][${escapeLatex(ann.author)}]` +
-           `[${escapeLatex(ann.highlight)}]{${escapeLatex(body)}}`;
+    return `\\olc{${escapeLatex(ann.date)}}{${escapeLatex(ann.author)}}` +
+           `{${escapeLatex(ann.highlight)}}{${escapeLatex(body)}}`;
   }
 
   // A full source line: the macro plus its idempotency marker.
@@ -117,11 +129,12 @@
       if (!pos) { unanchored += 1; continue; }
       const { p } = pos;
       const c = pos.c;
-      // Collapse the highlight to a single line BEFORE hashing/rendering: a span that wraps across two
-      // source lines carries a real `\n`, which would otherwise split the \olc line and orphan its
-      // marker. offset/anchorOffset keep the ORIGINAL op.p and op.c.length — the anchor is a real
-      // position in the untouched document, unaffected by how we render the highlight.
-      const highlight = collapseWhitespace(typeof c === 'string' ? c : '', 'space');
+      // Collapse the highlight to a single line, then truncate long spans to `first two [...] last
+      // two`, BEFORE hashing/rendering: a span that wraps across two source lines carries a real
+      // `\n`, which would otherwise split the \olc line and orphan its marker. offset/anchorOffset
+      // keep the ORIGINAL op.p and op.c.length — the anchor is a real position in the untouched
+      // document, unaffected by how we shorten the highlight for display.
+      const highlight = truncateWords(collapseWhitespace(typeof c === 'string' ? c : '', 'space'));
       for (const msg of thread.messages || []) {
         const date = formatTimestamp(msg.timestamp);
         const author = authorName(msg.user);
@@ -153,11 +166,27 @@
     return lines;
   }
 
-  // Plan idempotent, multi-insert-safe edits. Each annotation lives on its own line. If a line
-  // already carries this thread+message marker: matching hash -> skip, differing hash -> replace
-  // that line's content. Otherwise insert at the annotation's offset, grouping same-offset inserts
-  // into one `\n`-delimited block. Returns edits sorted by `from` DESCENDING so a naive front-to-back
-  // apply never invalidates a lower offset. Ranges are non-overlapping.
+  // Offset of the first character of the line containing `pos` — the position right after the
+  // preceding line break (or 0). Inserts are hoisted here so the \olc line lands on its own line(s)
+  // ABOVE the annotated line rather than splitting it mid-line. Breaks match scanLines (\r\n|\r|\n).
+  function lineStartOffset(docText, pos) {
+    const s = docText == null ? '' : String(docText);
+    const p = Math.max(0, Math.min(pos | 0, s.length));
+    const re = /\r\n|\r|\n/g;
+    let start = 0, m;
+    while ((m = re.exec(s)) !== null) {
+      if (p <= m.index) break;   // pos is on the current line [start, m.index]
+      start = m.index + m[0].length;
+    }
+    return start;
+  }
+
+  // Plan idempotent, multi-insert-safe edits. Each annotation lives on its own line, hoisted ABOVE
+  // the line it annotates. If a line already carries this thread+message marker: matching hash ->
+  // skip, differing hash -> replace that line's content. Otherwise insert at the START of the line
+  // holding the highlighted span, grouping same-line inserts into one `\n`-delimited block. Returns
+  // edits sorted by `from` DESCENDING so a naive front-to-back apply never invalidates a lower
+  // offset. Ranges are non-overlapping.
   function planEdits(docText, annotations, opts = {}) {
     const existing = {};
     for (const ln of scanLines(docText)) {
@@ -172,19 +201,22 @@
         if (ex.hash === ann.hash) continue;
         replaces.push({ from: ex.start, to: ex.end, insert: ann.line || renderLine(ann) });
       } else {
-        if (!insertsByOffset.has(ann.offset)) insertsByOffset.set(ann.offset, []);
-        insertsByOffset.get(ann.offset).push(ann.line || renderLine(ann));
+        // Anchor at the start of the line holding the span (anchorOffset = start of the highlight),
+        // so the macro sits on its own line above the text instead of interrupting it.
+        const at = lineStartOffset(docText, ann.anchorOffset != null ? ann.anchorOffset : ann.offset);
+        if (!insertsByOffset.has(at)) insertsByOffset.set(at, []);
+        insertsByOffset.get(at).push(ann.line || renderLine(ann));
       }
     }
-    // Build inserts, but drop any whose zero-width offset falls STRICTLY inside a REPLACE range —
-    // that would emit overlapping edits (pathological: a comment anchored on previously-injected
-    // \olc source). Such inserts go into `conflicts` (attached to the returned array) instead, so
-    // callers can surface them without corrupting the document.
+    // Build inserts, but drop any whose zero-width offset falls inside a REPLACE range [from,to) —
+    // that would emit overlapping edits (pathological: a comment anchored on a previously-injected
+    // \olc line that is itself being replaced). Such inserts go into `conflicts` (attached to the
+    // returned array) instead, so callers can surface them without corrupting the document.
     const conflicts = [];
     const inserts = [];
     for (const [offset, lns] of insertsByOffset.entries()) {
-      const insert = '\n' + lns.join('\n') + '\n';
-      if (replaces.some(r => offset > r.from && offset < r.to)) conflicts.push({ offset, insert });
+      const insert = lns.join('\n') + '\n';   // macro line(s) then a newline, pushed in ABOVE the anchor line
+      if (replaces.some(r => offset >= r.from && offset < r.to)) conflicts.push({ offset, insert });
       else inserts.push({ from: offset, to: offset, insert });
     }
     const edits = [...replaces, ...inserts].sort((a, b) => b.from - a.from);
@@ -200,8 +232,8 @@
     return out;
   }
 
-  const CORE = { escapeLatex, collapseWhitespace, formatTimestamp, contentHash,
-                 buildMarker, parseMarker, renderOlc, renderLine,
+  const CORE = { escapeLatex, collapseWhitespace, truncateWords, formatTimestamp, contentHash,
+                 buildMarker, parseMarker, renderOlc, renderLine, lineStartOffset,
                  buildAnnotations, planEdits, applyEdits, MARKER_RE_SRC };
 
   // ---- test export hatch: MUST be before any DOM/browser code -----------------------------------
@@ -383,35 +415,77 @@
     return els.find(el => (el.textContent || '').trim().toLowerCase() === 'help') || null;
   }
 
-  function buildMenu() {
+  // Overleaf's native menu-bar toggles (File/Edit/…) carry these classes; matching them means our
+  // button is styled entirely by THEIR CSS variables (colour, hover, active, padding, caret) with no
+  // hardcoded values. Used only as a fallback — we normally clone the class list off a live sibling.
+  const NATIVE_TOGGLE_CLASS =
+    'ide-redesign-toolbar-dropdown-toggle-subdued ide-redesign-toolbar-button-subdued ' +
+    'menu-bar-toggle dropdown-toggle btn btn-secondary';
+
+  function buildMenu(anchor) {
     const wrap = document.createElement('div');
     wrap.id = MENU_ID;
-    wrap.style.cssText = 'position:relative;display:inline-flex;align-items:center;font-family:Helvetica,Arial,sans-serif;';
+    wrap.className = 'dropdown';   // Bootstrap: position:relative, the anchor for the absolute menu
+
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = 'Comment sync';
-    btn.style.cssText = 'background:transparent;border:0;color:inherit;font:inherit;padding:6px 12px;cursor:pointer;';
-    const menu = document.createElement('div');
-    menu.style.cssText = 'position:absolute;top:100%;right:0;min-width:240px;background:#fff;color:#1b222c;' +
-      'border:1px solid #ccc;border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,.15);padding:4px 0;display:none;z-index:10000;';
-    const mkItem = (label, fn) => {
-      const a = document.createElement('button');
-      a.type = 'button';
-      a.textContent = label;
-      a.style.cssText = 'display:block;width:100%;text-align:left;background:transparent;border:0;font:inherit;' +
-        'padding:8px 16px;cursor:pointer;color:inherit;white-space:nowrap;';
-      a.addEventListener('mouseenter', () => { a.style.background = '#f0f0f0'; });
-      a.addEventListener('mouseleave', () => { a.style.background = 'transparent'; });
-      a.addEventListener('click', () => { menu.style.display = 'none'; fn(); });
+    // Clone the class list from a real sibling toggle (the located "Help" button) so we track their
+    // styling exactly and self-heal if they rename classes; strip transient state, fall back if absent.
+    const nativeBtn = anchor ? (anchor.closest('button') || anchor) : null;
+    const rawCls = nativeBtn && typeof nativeBtn.className === 'string' ? nativeBtn.className : '';
+    const cls = rawCls.split(/\s+/).filter(c => c && c !== 'show' && c !== 'active').join(' ');
+    btn.className = cls || NATIVE_TOGGLE_CLASS;
+    btn.setAttribute('aria-haspopup', 'true');
+    btn.setAttribute('aria-expanded', 'false');
+
+    // The dropdown itself: Overleaf's own dropdown-menu / dropdown-item classes, so the panel, rows,
+    // hover and dividers are themed by their variables. We don't run Bootstrap's Popper, so we pin the
+    // menu directly under the toggle ourselves (and cancel any popper transform the class carries).
+    const menu = document.createElement('ul');
+    menu.className = 'dropdown-menu-popper dropdown-menu';
+    menu.setAttribute('role', 'menu');
+    Object.assign(menu.style, { position: 'absolute', top: '100%', right: 'auto', bottom: 'auto',
+                                left: '0', margin: '0', transform: 'none', display: 'none' });
+
+    const setOpen = open => {
+      for (const el of [wrap, btn, menu]) el.classList.toggle('show', open);
+      btn.setAttribute('aria-expanded', String(open));
+      // The `dropdown-menu-popper` class ships `visibility:hidden` — it assumes Popper reveals the menu
+      // once positioned. We pin the menu ourselves (no Popper), so we must clear that visibility too,
+      // otherwise the panel is laid out (display:block, correct size) but invisible.
+      menu.style.display = open ? 'block' : 'none';
+      menu.style.visibility = open ? 'visible' : '';
+      if (!open) return;
+      // No Popper to flip us: left-align by default, but if that spills past the viewport, right-align.
+      Object.assign(menu.style, { left: '0', right: 'auto' });
+      if (menu.getBoundingClientRect().right > window.innerWidth - 8) {
+        Object.assign(menu.style, { left: 'auto', right: '0' });
+      }
+    };
+
+    const mkItem = (label, icon, fn) => {
+      const a = document.createElement('a');
+      a.className = 'dropdown-item';
+      a.setAttribute('role', 'menuitem');
+      a.setAttribute('tabindex', '0');
+      a.href = '#';
+      const ic = document.createElement('span');
+      ic.className = 'material-symbols dropdown-item-leading-icon';
+      ic.setAttribute('aria-hidden', 'true');
+      ic.setAttribute('translate', 'no');
+      ic.textContent = icon;
+      a.append(ic, document.createTextNode(label));
+      a.addEventListener('click', e => { e.preventDefault(); setOpen(false); fn(); });
       return a;
     };
-    menu.appendChild(mkItem('Sync comments to tex on this file', () => syncThisFile()));
-    menu.appendChild(mkItem('Send comments to tex on all files (experimental)', () => syncAllFiles()));
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-    });
-    document.addEventListener('click', () => { menu.style.display = 'none'; });
+
+    menu.append(
+      mkItem('Sync comments to tex on this file', 'sync', () => syncThisFile()),
+      mkItem('Send comments to tex on all files (experimental)', 'sync_alt', () => syncAllFiles()));
+
+    btn.addEventListener('click', e => { e.stopPropagation(); setOpen(!wrap.classList.contains('show')); });
+    document.addEventListener('click', () => setOpen(false));
     wrap.append(btn, menu);
     return wrap;
   }
@@ -428,7 +502,7 @@
     }
     warnedNoAnchor = false;
     const host = help.closest('li') || help.parentElement || help;
-    host.parentElement.insertBefore(buildMenu(), host);
+    host.parentElement.insertBefore(buildMenu(help), host);
   }
 
   // Re-inject across SPA route changes / re-renders; the id guard prevents duplicates.

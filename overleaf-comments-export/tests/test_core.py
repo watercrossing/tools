@@ -81,6 +81,20 @@ def test_collapse_break(core):
     assert core("collapseWhitespace", "a\nb", "break") == "a \\\\ b"
 
 
+# ---- truncateWords ------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw,expected", [
+    ("", ""),
+    ("one", "one"),
+    ("one two three four five", "one two three four five"),        # exactly 5 words -> unchanged
+    ("one two three four five six", "one two [...] five six"),      # >5 words -> first 2 [...] last 2
+    ("Another sentence. With a comment across two lines.",
+     "Another sentence. [...] two lines."),
+])
+def test_truncate_words(core, raw, expected):
+    assert core("truncateWords", raw) == expected
+
+
 # ---- formatTimestamp ----------------------------------------------------------------------------
 
 def test_format_timestamp(core):
@@ -120,7 +134,7 @@ def test_marker_roundtrip(core):
     # trailing-whitespace tolerance
     assert core("parseMarker", marker + "   ") == {"threadId": tid, "messageId": mid, "hash": h}
     # full rendered line ends with a parseable marker
-    line = "\\olc[d][a][h]{c} " + marker
+    line = "\\olc{d}{a}{h}{c} " + marker
     assert core("parseMarker", line) == {"threadId": tid, "messageId": mid, "hash": h}
 
 
@@ -205,6 +219,18 @@ def test_build_annotations_non_finite_timestamp_still_emitted(core):
     assert res["annotations"][0]["date"] == ""
 
 
+# ---- lineStartOffset ----------------------------------------------------------------------------
+
+@pytest.mark.parametrize("pos,expected", [
+    (0, 0), (3, 0), (5, 0),      # within / at the end of line 0 "hello" [0,5); index 5 is its \n
+    (6, 6), (8, 6), (11, 6),     # within / at the end of line 1 "world" [6,11)
+    (12, 12), (13, 12),          # the final line "!" (offset clamps to the doc length)
+])
+def test_line_start_offset(core, pos, expected):
+    doc = "hello\nworld\n!"
+    assert core("lineStartOffset", doc, pos) == expected
+
+
 # ---- planEdits / applyEdits ---------------------------------------------------------------------
 
 def _marker_re():
@@ -215,7 +241,9 @@ def _marker_re():
 def test_plan_edits_fresh_insert_and_idempotency(core):
     threads, comments = _fixture()
     anns = core("buildAnnotations", threads, comments)["annotations"]
-    doc = "A" * 100 + "B" * 5000 + "C" * 4000  # offsets 100 and 5020 fall inside
+    # three lines: the single-message comment anchors in line 0 (offset 100), the two-message thread
+    # in line 1 (offset 5000) -> inserts land at each line's START (0 and 201), never mid-line.
+    doc = "A" * 200 + "\n" + "B" * 6000 + "\n" + "C" * 4000
 
     edits = core("planEdits", doc, anns)
     # all inserts, sorted DESCENDING by `from`, non-overlapping
@@ -223,11 +251,11 @@ def test_plan_edits_fresh_insert_and_idempotency(core):
     assert froms == sorted(froms, reverse=True)
     for e in edits:
         assert e["from"] == e["to"]  # zero-width inserts
-    # non-overlapping (distinct offsets here)
+    # non-overlapping (distinct line-start offsets here: 0 and 201)
     assert len(froms) == len(set(froms))
 
     out = core("applyEdits", doc, edits)
-    assert "\\olc[" in out
+    assert "\\olc{" in out
     # every %olcsync marker is IMMEDIATELY followed by a newline (or end-of-string) — no source text
     # sits between the marker and the newline, so the leading `%` can never comment out real source.
     markers = list(re.finditer(r"%olcsync:[0-9a-f]+:[0-9a-f]+:[0-9a-z]+", out))
@@ -240,10 +268,37 @@ def test_plan_edits_fresh_insert_and_idempotency(core):
     assert core("planEdits", out, anns) == []
 
 
+def test_plan_edits_inserts_before_anchor_line(core):
+    # A comment anchored mid-line is hoisted onto its OWN line(s) directly ABOVE that line, never
+    # splitting it. Two comments on the same line cluster together, in message order, above the line.
+    threads = {"6a01c932b2a02a63fe000001": {"messages": [
+        {"id": "aaaa0001", "content": "first note", "timestamp": 1784818169254,
+         "user": {"first_name": "Ann"}},
+        {"id": "aaaa0002", "content": "second note", "timestamp": 1784818169254,
+         "user": {"first_name": "Bob"}}]}}
+    line0 = "Here is a random sentence"
+    line1 = ", with one comment."
+    doc = line0 + "\n" + line1
+    p = line0.index("sentence")  # highlight starts mid-line, inside line 0
+    comments = [{"id": "x", "op": {"c": "sentence", "p": p, "t": "6a01c932b2a02a63fe000001"}}]
+
+    anns = core("buildAnnotations", threads, comments)["annotations"]
+    out = core("applyEdits", doc, core("planEdits", doc, anns))
+    lines = out.split("\n")
+    # the two \olc lines come FIRST, in message order, then the untouched source lines
+    assert lines[0].startswith("\\olc{") and "first note" in lines[0]
+    assert lines[1].startswith("\\olc{") and "second note" in lines[1]
+    assert lines[2] == line0 and lines[3] == line1
+    # nothing was injected into the middle of the sentence
+    assert line0 in out and "sentence\\olc" not in out and "sentence \\olc" not in out
+    # idempotent: markers already present -> no further edits
+    assert core("planEdits", out, anns) == []
+
+
 def test_plan_edits_replace_on_changed_hash(core):
     threads, comments = _fixture()
     anns = core("buildAnnotations", threads, comments)["annotations"]
-    doc = "A" * 100 + "B" * 5000 + "C" * 4000
+    doc = "A" * 200 + "\n" + "B" * 6000 + "\n" + "C" * 4000
     written = core("applyEdits", doc, core("planEdits", doc, anns))
 
     # change one message's text -> new hash -> exactly one REPLACE of that line
@@ -266,7 +321,7 @@ def test_plan_edits_replace_on_changed_hash(core):
 def test_plan_edits_new_reply_single_insert(core):
     threads, comments = _fixture()
     anns = core("buildAnnotations", threads, comments)["annotations"]
-    doc = "A" * 100 + "B" * 5000 + "C" * 4000
+    doc = "A" * 200 + "\n" + "B" * 6000 + "\n" + "C" * 4000
     written = core("applyEdits", doc, core("planEdits", doc, anns))
 
     # add a brand-new reply to the multi-message thread -> exactly one INSERT
@@ -288,7 +343,7 @@ def test_apply_edits_order_independent(core):
     # applyEdits re-sorts DESCENDING internally, so any input order yields the same document.
     threads, comments = _fixture()
     anns = core("buildAnnotations", threads, comments)["annotations"]
-    doc = "A" * 100 + "B" * 5000 + "C" * 4000
+    doc = "A" * 200 + "\n" + "B" * 6000 + "\n" + "C" * 4000  # anchors on distinct lines -> >1 insert
     edits = core("planEdits", doc, anns)  # planEdits returns edits sorted DESCENDING by `from`
     assert len(edits) >= 2  # need multiple edits for order to matter
     baseline = core("applyEdits", doc, edits)
@@ -324,8 +379,8 @@ def test_multiline_highlight_no_orphan_on_resync(core):
     assert len(edits) == 1  # a single in-place REPLACE, not an insert leaving an orphan
     final = core("applyEdits", written, edits)
 
-    assert final.count("\\olc[") == 1  # exactly one \olc token, no orphaned fragment / duplicate
-    olc_lines = [ln for ln in final.split("\n") if "\\olc[" in ln]
+    assert final.count("\\olc{") == 1  # exactly one \olc token, no orphaned fragment / duplicate
+    olc_lines = [ln for ln in final.split("\n") if "\\olc{" in ln]
     assert len(olc_lines) == 1  # it sits on its own single physical line...
     assert "\\n" not in olc_lines[0]  # ...and contains no literal newline mid-macro
     m = re.search(r"%olcsync:[0-9a-f]+:[0-9a-f]+:[0-9a-z]+", olc_lines[0])
@@ -334,16 +389,16 @@ def test_multiline_highlight_no_orphan_on_resync(core):
 
 
 def test_plan_edits_overlap_guard(core):
-    # Pathological: a brand-new comment anchored INSIDE a previously-injected \olc marker line. The
-    # insert offset falls within an existing REPLACE range; planEdits must NOT emit overlapping edits,
-    # and must divert the offending insert into the `conflicts` list instead.
-    marker_line = "\\olc[d][a][h]{old} %olcsync:aa:bb:oldhash"
+    # Pathological: a brand-new comment anchored on a previously-injected \olc marker line that is
+    # itself being replaced. The insert snaps to that line's start, landing inside the REPLACE range;
+    # planEdits must NOT emit overlapping edits, and must divert the insert into `conflicts` instead.
+    marker_line = "\\olc{d}{a}{h}{old} %olcsync:aa:bb:oldhash"
     doc = "X" * 20 + "\n" + marker_line + "\n" + "Y" * 20
-    inside = 21 + 5  # an offset strictly within the marker line (which starts at 21)
+    inside = 21 + 5  # an offset on the marker line (which starts at 21); snaps to line start 21
     ann_replace = {"threadId": "aa", "messageId": "bb", "hash": "newhash", "offset": 0,
-                   "line": "\\olc[d][a][h]{new} %olcsync:aa:bb:newhash"}
+                   "line": "\\olc{d}{a}{h}{new} %olcsync:aa:bb:newhash"}
     ann_insert = {"threadId": "cc", "messageId": "dd", "hash": "zz", "offset": inside,
-                  "line": "\\olc[d2][a2][h2]{c2} %olcsync:cc:dd:zz"}
+                  "line": "\\olc{d2}{a2}{h2}{c2} %olcsync:cc:dd:zz"}
     args = [doc, [ann_replace, ann_insert]]
 
     edits = core("planEdits", *args)

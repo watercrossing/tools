@@ -37,6 +37,10 @@ blob-report/
 .env.*
 !.env.example
 
+# Saved browser sessions / cookies for live-site probes (e.g. Overleaf). Secrets — never commit.
+.auth/
+*.storage-state.json
+
 # --- Editors / IDEs ---------------------------------------------------------
 .idea/
 .vscode/*
