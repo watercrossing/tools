@@ -70,3 +70,6 @@ scratch/
 _local/
 *.local.html
 *.local.md
+
+# Rendered Claude Code transcripts (personal session logs, may be private).
+claude-render-transcripts/transcripts/
