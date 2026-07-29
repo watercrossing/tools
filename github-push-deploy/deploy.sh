@@ -15,10 +15,17 @@ set -eux
 : "${BASE_DIR:?BASE_DIR is not set — run via update.sh or set it explicitly}"
 
 # --- Update the deploy machinery itself (so future pushes can change it) -----
+# Install both files by writing beside the target and renaming, never by overwriting in place. update.sh is *executing right now* (it sourced
+# this script), and bash reads a script lazily by byte offset: overwrite it and bash resumes at that offset in the new file, mid-statement, and
+# dies with a syntax error. rename(2) swaps the directory entry while the running copy keeps the original inode open, so it reads out intact.
+# The same applies to the listener, which a concurrent webhook could be compiling. Both temp files live in BASE_DIR — same filesystem, so the
+# rename is atomic, and never inside the web-exposed update-scripts/.
 mkdir -p "$BASE_DIR/update-scripts"
-cp "github-push-deploy/github-hook-listener.php" "$BASE_DIR/update-scripts/github-hook-listener.php"
-cp "github-push-deploy/update.sh" "$BASE_DIR/update.sh"
-chmod +x "$BASE_DIR/update.sh"
+cp "github-push-deploy/github-hook-listener.php" "$BASE_DIR/github-hook-listener.php.new"
+mv -f "$BASE_DIR/github-hook-listener.php.new" "$BASE_DIR/update-scripts/github-hook-listener.php"
+cp "github-push-deploy/update.sh" "$BASE_DIR/update.sh.new"
+chmod +x "$BASE_DIR/update.sh.new"
+mv -f "$BASE_DIR/update.sh.new" "$BASE_DIR/update.sh"
 
 # --- Publish the site --------------------------------------------------------
 # Two example strategies; this repo uses (B). Swap the comments to choose.
