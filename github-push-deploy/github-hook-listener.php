@@ -8,6 +8,39 @@
 error_reporting(0);
 header('Content-Type: text/plain');
 
+// With no date.timezone in php.ini, PHP's date() falls back to UTC — while
+// update.sh's run markers use GNU date and the box's local zone, so one deploy
+// gets two timestamps an hour apart under BST. Adopt the system zone here rather
+// than editing php.ini, reading it from the same places the C library looks.
+function system_timezone() {
+    $ids = array();
+    if (is_link('/etc/localtime')) {            // what glibc actually reads; systemd keeps this a symlink
+        $target = readlink('/etc/localtime');   // ... usually relative: ../usr/share/zoneinfo/Europe/London
+        $at     = strpos($target, 'zoneinfo/');
+        if ($at !== false) {
+            $ids[] = substr($target, $at + strlen('zoneinfo/'));
+        }
+    }
+    if (is_readable('/etc/timezone')) {         // Debian/Ubuntu, where /etc/localtime may be a plain copy
+        $ids[] = trim(file_get_contents('/etc/timezone'));
+    }
+    foreach ($ids as $id) {
+        // timezone_open() returns false for an unknown ID (the DateTimeZone constructor would throw
+        // instead), so only an identifier PHP actually knows ever reaches the setter.
+        if ($id !== '' && timezone_open($id)) {
+            return $id;
+        }
+    }
+    return date_default_timezone_get();  // nothing to go on — leave PHP's default (UTC) alone
+}
+
+date_default_timezone_set(system_timezone());
+
+// Timestamp format for both logs. The trailing offset mirrors GNU date's %z in
+// update.sh's markers, so the two files are comparable line for line — and a
+// zone that failed to line up shows as +0000 instead of hiding.
+define('LOG_TIME_FORMAT', 'Y-m-d H:i:s O');
+
 // Read a plain KEY="value" config file (the same deploy.conf the shell sources).
 function read_config($path) {
     $config = array();
@@ -64,7 +97,7 @@ $cmd = escapeshellarg($base_dir . '/update.sh')
      . ' >> ' . escapeshellarg(CMDLOG) . ' 2>&1';
 
 function log_msg($msg) {
-    file_put_contents(LOGFILE, date('Y-m-d H:i:s') . ' ' . $msg . "\n", FILE_APPEND);
+    file_put_contents(LOGFILE, date(LOG_TIME_FORMAT) . ' ' . $msg . "\n", FILE_APPEND);
 }
 
 // Drop the oldest bytes of an oversized log, cutting at a line boundary so the
@@ -85,7 +118,7 @@ function trim_log($path) {
         $kept = stream_get_contents($fh);
         ftruncate($fh, 0);
         rewind($fh);
-        fwrite($fh, '===== log trimmed ' . date('Y-m-d H:i:s') . ' — older entries dropped =====' . "\n" . $kept);
+        fwrite($fh, '===== log trimmed ' . date(LOG_TIME_FORMAT) . ' — older entries dropped =====' . "\n" . $kept);
         fflush($fh);
         flock($fh, LOCK_UN);
     }

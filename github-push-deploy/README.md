@@ -118,6 +118,10 @@ All keys live in `deploy.conf` (see [`deploy.conf.example`](deploy.conf.example)
   ```
   The closing marker is written from an `EXIT` trap, so a failed deploy is still delimited and its exit status recorded. `deploy.log` gets the matching one-line summary from the listener (`update.sh exited 0 after 1.7s`). Manual runs print the same markers to the terminal.
   Elapsed time is reported to a tenth of a second. That needs GNU `date` (for `%1N`); on a `date` without it the timing degrades to whole seconds — always `.0` — rather than failing the deploy.
+- **Timestamps and timezone.** Both logs stamp local time with its UTC offset (`2026-07-29 15:54:34 +0100`), so lines from the two files line up.
+  This needs saying because PHP does not follow the system zone: with `date.timezone` unset in `php.ini` — the usual state — `date()` silently falls back to UTC, while `update.sh` uses GNU `date` and the box's zone, and the same deploy ends up stamped an hour apart under BST.
+  Rather than editing `php.ini`, the listener adopts the system zone itself, reading `/etc/localtime`'s symlink target (what the C library uses) and falling back to `/etc/timezone`.
+  If neither is readable it stays on UTC — and because every line carries its offset, that shows up as `+0000` next to the shell's `+0100` instead of hiding.
 - **Log trimming.** Both logs are capped: whenever the listener handles a request, any log over 5 MB is cut back to its last 4 MB (at a line boundary) and marked with a `===== log trimmed … =====` line. So each file stays between 4 MB and roughly 5 MB plus one deploy's output.
 - GitHub → repo → Settings → Webhooks → *Recent Deliveries* shows each POST, its response, and a **Redeliver** button to retry without pushing.
 - Run the deploy path by hand as the deploy user: `sudo -u apache /var/www/tools/update.sh`.
