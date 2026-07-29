@@ -41,8 +41,15 @@ mv -f "$BASE_DIR/update.sh.new" "$BASE_DIR/update.sh"
 #     that downloads plain files — scripts included, so github-hook-listener.php is served as a download and never executed — while folders
 #     and .html tools render. Needs uv on the deploy user's PATH. Build into html-new, then swap it in with renames so the live site is
 #     never served mid-rebuild.
+#     Every page's footer is stamped with the commit being deployed, linked to it on GitHub. `git rev-parse` works fine in update.sh's shallow
+#     clone; both values are allowed to come out empty (a run from a .git-less copy, or a deploy.conf without REPO_FULL_NAME), which leaves
+#     the footer unstamped rather than failing the deploy.
+SHORT_SHA="$(git rev-parse --short HEAD 2>/dev/null || true)"
+COMMIT_URL=""
+if [ -n "$SHORT_SHA" ] && [ -n "${REPO_FULL_NAME:-}" ]; then COMMIT_URL="https://github.com/$REPO_FULL_NAME/commit/$(git rev-parse HEAD)"; fi
+
 rm -rf "$BASE_DIR/html-new" "$BASE_DIR/html-old"
-uv run repo-web-view/repo-web-view.py . "$BASE_DIR/html-new"
+uv run repo-web-view/repo-web-view.py . "$BASE_DIR/html-new" --footer-note "$SHORT_SHA" --footer-note-url "$COMMIT_URL"
 if [ -d "$BASE_DIR/html" ]; then mv "$BASE_DIR/html" "$BASE_DIR/html-old"; fi
 mv "$BASE_DIR/html-new" "$BASE_DIR/html"
 rm -rf "$BASE_DIR/html-old"
