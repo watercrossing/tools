@@ -7,6 +7,23 @@
 
 set -euo pipefail
 
+# --- Run markers -------------------------------------------------------------
+# The listener appends this script's output to deploy-cmd.log, so without these successive runs would run into each other. Bracket every run
+# with a timestamped marker and report how long it took. The EXIT trap fires even when a step fails, so the closing marker (and its exit
+# status) is always written.
+# Elapsed time is kept in tenths of a second, as integers — bash has no float arithmetic. GNU date's %1N is the tenths digit; if date lacks it
+# (busybox, BSD) the probe below appends a literal 0 instead, degrading to whole-second resolution rather than breaking the deploy.
+[[ $(date +%1N) == [0-9] ]] && EPOCH_DS='+%s%1N' || EPOCH_DS='+%s0'
+RUN_START=$(date "$EPOCH_DS")
+printf '\n===== deploy started %s =====\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
+
+on_exit() {
+  { set +x; } 2>/dev/null  # ... without tracing the trap's own bookkeeping
+  local ds=$(($(date "$EPOCH_DS") - RUN_START))
+  printf '===== deploy finished %s — exit %d after %d.%ds =====\n' "$(date '+%Y-%m-%d %H:%M:%S %z')" "$1" "$((ds / 10))" "$((ds % 10))"
+}
+trap 'on_exit $?' EXIT
+
 # Locate deploy.conf, which sits next to this script in BASE_DIR.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

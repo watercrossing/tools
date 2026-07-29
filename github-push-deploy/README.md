@@ -110,6 +110,15 @@ All keys live in `deploy.conf` (see [`deploy.conf.example`](deploy.conf.example)
 ## Debugging
 
 - The listener logs to `$BASE_DIR/deploy.log`; the deploy output goes to `$BASE_DIR/deploy-cmd.log`. Both sit in `BASE_DIR`, so they are easy to find and are not web-accessible.
+- **Run boundaries and timing.** `update.sh` brackets every run in `deploy-cmd.log` with a marker, so successive deploys don't run into each other:
+  ```
+  ===== deploy started 2026-07-29 14:57:02 +0100 =====
+  ...traced output of update.sh and deploy.sh...
+  ===== deploy finished 2026-07-29 14:57:04 +0100 — exit 0 after 1.7s =====
+  ```
+  The closing marker is written from an `EXIT` trap, so a failed deploy is still delimited and its exit status recorded. `deploy.log` gets the matching one-line summary from the listener (`update.sh exited 0 after 1.7s`). Manual runs print the same markers to the terminal.
+  Elapsed time is reported to a tenth of a second. That needs GNU `date` (for `%1N`); on a `date` without it the timing degrades to whole seconds — always `.0` — rather than failing the deploy.
+- **Log trimming.** Both logs are capped: whenever the listener handles a request, any log over 5 MB is cut back to its last 4 MB (at a line boundary) and marked with a `===== log trimmed … =====` line. So each file stays between 4 MB and roughly 5 MB plus one deploy's output.
 - GitHub → repo → Settings → Webhooks → *Recent Deliveries* shows each POST, its response, and a **Redeliver** button to retry without pushing.
 - Run the deploy path by hand as the deploy user: `sudo -u apache /var/www/tools/update.sh`.
 - A `403` means the signature failed (wrong/absent secret). A `200` with `Ignored` means the signature was fine but it wasn't a push to the configured branch/repo.

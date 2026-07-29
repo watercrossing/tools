@@ -53,11 +53,43 @@ if ($secret === 'REPLACE_WITH_A_LONG_RANDOM_STRING') {
 }
 
 define('LOGFILE', $base_dir . '/deploy.log');
+define('CMDLOG', $base_dir . '/deploy-cmd.log');
+
+// Both logs only ever grow, so cap them: once a file passes MAX, keep its last
+// KEEP bytes and drop the rest.
+define('LOG_MAX_BYTES', 5 * 1024 * 1024);
+define('LOG_KEEP_BYTES', 4 * 1024 * 1024);
+
 $cmd = escapeshellarg($base_dir . '/update.sh')
-     . ' >> ' . escapeshellarg($base_dir . '/deploy-cmd.log') . ' 2>&1';
+     . ' >> ' . escapeshellarg(CMDLOG) . ' 2>&1';
 
 function log_msg($msg) {
     file_put_contents(LOGFILE, date('Y-m-d H:i:s') . ' ' . $msg . "\n", FILE_APPEND);
+}
+
+// Drop the oldest bytes of an oversized log, cutting at a line boundary so the
+// file never starts mid-line. Called before update.sh runs, so nothing else is
+// writing to deploy-cmd.log at the time.
+function trim_log($path) {
+    clearstatcache(true, $path);
+    if (!is_file($path) || filesize($path) <= LOG_MAX_BYTES) {
+        return;
+    }
+    $fh = fopen($path, 'r+');
+    if ($fh === false) {
+        return;
+    }
+    if (flock($fh, LOCK_EX)) {
+        fseek($fh, filesize($path) - LOG_KEEP_BYTES);
+        fgets($fh);  // discard the partial line we landed in the middle of
+        $kept = stream_get_contents($fh);
+        ftruncate($fh, 0);
+        rewind($fh);
+        fwrite($fh, '===== log trimmed ' . date('Y-m-d H:i:s') . ' — older entries dropped =====' . "\n" . $kept);
+        fflush($fh);
+        flock($fh, LOCK_UN);
+    }
+    fclose($fh);
 }
 
 // Verify the signature BEFORE touching the body any further. GitHub signs the
@@ -84,11 +116,16 @@ $push_ok   = ($event === 'push');
 $repo_ok   = isset($data['repository']['full_name']) && $data['repository']['full_name'] === $repo;
 $branch_ok = isset($data['ref']) && $data['ref'] === 'refs/heads/' . $branch;
 
+trim_log(LOGFILE);
+trim_log(CMDLOG);
+
 log_msg("=== Request from {$remote} event={$event} ===");
 
 if ($push_ok && $repo_ok && $branch_ok) {
     log_msg("Signature OK, push to {$repo}@{$branch} — running update.sh");
-    passthru($cmd);
+    $started = microtime(true);
+    passthru($cmd, $status);
+    log_msg(sprintf('update.sh exited %d after %.1fs — output in deploy-cmd.log', $status, microtime(true) - $started));
 } else {
     // Authenticated, but not a push to the branch/repo we deploy — acknowledge and ignore.
     log_msg("Ignoring (push_ok={$push_ok} repo_ok={$repo_ok} branch_ok={$branch_ok})");
