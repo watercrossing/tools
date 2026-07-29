@@ -29,13 +29,18 @@ mv -f "$BASE_DIR/update.sh.new" "$BASE_DIR/update.sh"
 
 # --- Publish the site --------------------------------------------------------
 # Two example strategies; this repo uses (B). Swap the comments to choose.
+# Each sets PUBLISH_DIR to the tree it fills, so the version stamp below writes into that tree whichever strategy is active — for (B) that is
+# the staging copy, not the live one.
 
 # (A) Simplest: copy the repo's files as-is into html/ (a plain static site), skipping dotfiles/dirs (.git, .github, .gitignore, ...) and the
 #     ./github-push-deploy folder — otherwise the source of these deploy scripts, and a runnable (though inert, config-less) copy of
 #     github-hook-listener.php, would be served publicly. Drop the `-name github-push-deploy` clause to include it, or add your own exclusions.
-# mkdir -p "$BASE_DIR/html"
-# rm -rf "$BASE_DIR/html/"*
-# find . -mindepth 1 -maxdepth 1 \( -path './.*' -o -name github-push-deploy \) -prune -o -exec cp -r "{}" "$BASE_DIR/html/" \;
+#     Publishes in place, so there is no tree to swap in at the end.
+# PUBLISH_DIR="$BASE_DIR/html"
+# mkdir -p "$PUBLISH_DIR"
+# rm -rf "$PUBLISH_DIR/"*
+# find . -mindepth 1 -maxdepth 1 \( -path './.*' -o -name github-push-deploy \) -prune -o -exec cp -r "{}" "$PUBLISH_DIR/" \;
+
 
 # (B) Rendered, GitHub-style browsable view via the repo-web-view tool: an index.html per folder (rendered README + listing) plus a .htaccess
 #     that downloads plain files — scripts included, so github-hook-listener.php is served as a download and never executed — while folders
@@ -44,15 +49,29 @@ mv -f "$BASE_DIR/update.sh.new" "$BASE_DIR/update.sh"
 #     Every page's footer is stamped with the commit being deployed, linked to it on GitHub. `git rev-parse` works fine in update.sh's shallow
 #     clone; both values are allowed to come out empty (a run from a .git-less copy, or a deploy.conf without REPO_FULL_NAME), which leaves
 #     the footer unstamped rather than failing the deploy.
+PUBLISH_DIR="$BASE_DIR/html-new"
 SHORT_SHA="$(git rev-parse --short HEAD 2>/dev/null || true)"
 COMMIT_URL=""
 if [ -n "$SHORT_SHA" ] && [ -n "${REPO_FULL_NAME:-}" ]; then COMMIT_URL="https://github.com/$REPO_FULL_NAME/commit/$(git rev-parse HEAD)"; fi
 
-rm -rf "$BASE_DIR/html-new" "$BASE_DIR/html-old"
-uv run repo-web-view/repo-web-view.py . "$BASE_DIR/html-new" --footer-note "$SHORT_SHA" --footer-note-url "$COMMIT_URL"
-if [ -d "$BASE_DIR/html" ]; then mv "$BASE_DIR/html" "$BASE_DIR/html-old"; fi
-mv "$BASE_DIR/html-new" "$BASE_DIR/html"
-rm -rf "$BASE_DIR/html-old"
+rm -rf "$PUBLISH_DIR" "$BASE_DIR/html-old"
+uv run repo-web-view/repo-web-view.py . "$PUBLISH_DIR" --footer-note "$SHORT_SHA" --footer-note-url "$COMMIT_URL"
+
+# --- Stamp the deployed commit -----------------------------------------------
+# Stamp the deployed commit (short hash and commit date) so that what the live site is actually serving can be compared against the repo
+# without ssh'ing to the box: `curl -s https://tools.example.com/version.txt` against `git log -1 --format='%h %cI'`. Written into PUBLISH_DIR
+# before the swap below, so it appears at the same instant as the content it describes. The shallow clone has HEAD, which is all this needs.
+# Under strategy (B) it lands after the pages are generated, so it is not in any folder listing, and the .htaccess marks it as a download —
+# neither of which curl cares about.
+git log -1 --format='%h %cI' > "$PUBLISH_DIR/version.txt"
+
+# --- Swap the finished tree in (strategy B only) ------------------------------
+# (A) filled html/ directly, so there is nothing to move.
+if [ "$PUBLISH_DIR" != "$BASE_DIR/html" ]; then
+  if [ -d "$BASE_DIR/html" ]; then mv "$BASE_DIR/html" "$BASE_DIR/html-old"; fi
+  mv "$PUBLISH_DIR" "$BASE_DIR/html"
+  rm -rf "$BASE_DIR/html-old"
+fi
 
 # --- Optional: post-deploy steps ---------------------------------------------
 # e.g. build assets, reload apache (needs a sudoers rule), warm caches, etc.

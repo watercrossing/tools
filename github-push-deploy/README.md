@@ -123,6 +123,12 @@ All keys live in `deploy.conf` (see [`deploy.conf.example`](deploy.conf.example)
   Rather than editing `php.ini`, the listener adopts the system zone itself, reading `/etc/localtime`'s symlink target (what the C library uses) and falling back to `/etc/timezone`.
   If neither is readable it stays on UTC — and because every line carries its offset, that shows up as `+0000` next to the shell's `+0100` instead of hiding.
 - **Log trimming.** Both logs are capped: whenever the listener handles a request, any log over 5 MB is cut back to its last 4 MB (at a line boundary) and marked with a `===== log trimmed … =====` line. So each file stays between 4 MB and roughly 5 MB plus one deploy's output.
+- **What is the site actually serving?** `deploy.sh` writes `version.txt` into the published tree, so you can check without an SSH login:
+  ```bash
+  curl -s https://tools.example.com/version.txt     # e3804f8 2026-07-29T16:16:51+01:00
+  git log -1 --format='%h %cI'                      # the same, from your checkout
+  ```
+  It is written into the staging tree *before* the swap, so it appears at the same instant as the content it describes rather than a moment later. Under publish strategy (B) it lands after `repo-web-view` has generated the pages, so it is not in any folder listing, and the generated `.htaccess` marks it as a download — neither of which matters to `curl`.
 - GitHub → repo → Settings → Webhooks → *Recent Deliveries* shows each POST, its response, and a **Redeliver** button to retry without pushing.
 - Run the deploy path by hand as the deploy user: `sudo -u apache /var/www/tools/update.sh`.
 - A `403` means the signature failed (wrong/absent secret). A `200` with `Ignored` means the signature was fine but it wasn't a push to the configured branch/repo.
@@ -131,7 +137,8 @@ All keys live in `deploy.conf` (see [`deploy.conf.example`](deploy.conf.example)
 ## Notes and caveats
 
 - **Blocking deploy.** The listener runs `update.sh` synchronously, so a very slow deploy can exceed GitHub's ~10s webhook timeout. The deploy still finishes server-side; GitHub just records a timeout and can redeliver. Background the command in the listener if this bites.
-- **The deployed commit is visible on the site.** The bundled `deploy.sh` passes the short SHA of the clone it just built to `repo-web-view --footer-note`, so every generated page's footer carries it, linked to that commit on GitHub — the quickest way to tell whether a push actually reached the live site, and it updates itself on every deploy. It falls back to an unstamped footer if `git` or `REPO_FULL_NAME` is unavailable, and only applies to publish strategy (B); the plain copy in (A) generates no page to stamp.
+- **The deployed commit is visible on the site**, two ways. Every strategy writes `version.txt` (short hash + ISO commit date) into the published tree, for the `curl` check above. Strategy (B) additionally passes the short SHA to `repo-web-view --footer-note`, so every generated page's footer carries it, linked to that commit on GitHub — the plain copy in (A) generates no page to stamp, and the footer falls back to unstamped if `git` or `REPO_FULL_NAME` is unavailable.
+- **Both strategies publish into `$PUBLISH_DIR`.** Each sets it — `html/` for (A), which copies in place, or `html-new/` for (B), which stages and then renames — and the shared steps at the end of `deploy.sh` (the version stamp, then the swap, which is skipped when `PUBLISH_DIR` is already `html/`) work off that one variable. Set it if you write your own strategy.
 - **Non-atomic publish.** `deploy.sh` clears `html/` before repopulating it, so the site is briefly incomplete mid-deploy. For zero-downtime you could build into a new directory and swap a symlink (with `FollowSymLinks` enabled), since `renameat2(RENAME_EXCHANGE)` is not exposed to userspace.
 - **Self-update is a rename, not a copy.** `deploy.sh` installs `update.sh` and the listener by writing a `.new` file beside the target and renaming over it. This matters because `update.sh` is still executing at that moment and bash reads a script lazily by byte offset: overwriting it in place makes bash resume at that offset in the *new* file and die with a syntax error on the way out (only when the file's content actually changes, which is what makes it easy to miss). Keep the rename if you rewrite that section.
 - **Trust.** Anyone who can push to the branch can run arbitrary shell on the server via `deploy.sh` — that is the whole point, but scope the deploy key and secret accordingly.
