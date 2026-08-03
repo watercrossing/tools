@@ -22,6 +22,10 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 
 - **[goatcounter-backfill](goatcounter-backfill/)** — replay archived Apache/nginx `combined` access logs into GoatCounter without collapsing visitor sessions. GoatCounter expires sessions after 8 hours of *wall-clock* inactivity, so `goatcounter import` replays an entire archive inside one session window: a visitor returning daily to the same page becomes a single visit stamped on day one, and the later days produce no rows at all. This tool assigns sessions from *log* time via the `session` field of `/api/v0/count`, and mirrors the `-exclude` rules so backfilled data matches what the live importer collects.
 
+## Documentation
+
+- **[markdown-docs-lint](markdown-docs-lint/)** — lint a Markdown docs tree for the failures that break silently: dead relative links, dead `#anchors`, pages nothing links to, and files grown too long to read whole. Anchors are the point: rename a heading and every inbound `#fragment` dies with no error, no visual change, and a one-line `git diff` that does not include the files that broke. Handles the traps a hand-rolled checker gets wrong — GitHub's slug leaves *two* hyphens where an em dash sat between spaces, code fences are not headings, and backticked text still counts toward a slug. Exits non-zero, so it works as a pre-commit hook.
+
 ## Claude Code
 
 - **[claude-render-transcripts](claude-render-transcripts/)** — render a Claude Code session `.jsonl` transcript (including headless `claude -p` runs that never appear in the `/resume` picker) into readable plain text: one header per turn and `text` / `thinking` / `tool_use` / `tool_result` blocks flattened, with long tool inputs and results truncated.
