@@ -24,7 +24,7 @@ from pathlib import Path
 
 FENCE_RE = re.compile(r'\s*(`{3,}|~{3,})')
 ATX_RE = re.compile(r'^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$')
-INLINE_CODE_RE = re.compile(r'`+[^`]*`+')
+INLINE_CODE_RE = re.compile(r'(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)')  # CommonMark: a run of N backticks closes with exactly N, so `` `x` `` nests
 LINK_RE = re.compile(r'(?<!!)\[[^\]]*\]\(\s*<?([^\s)>]+)')
 SKIP_SCHEME_RE = re.compile(r'^(?:[a-z][a-z0-9+.-]*:|//|#?$)', re.I)  # http:, mailto:, protocol-relative, and the empty target
 

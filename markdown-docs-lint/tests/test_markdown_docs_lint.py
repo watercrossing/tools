@@ -86,6 +86,19 @@ def test_tilde_fence_and_inline_span_are_handled(tmp_path):
     assert lint(root).returncode == 0
 
 
+def test_double_backtick_span_hides_its_contents(tmp_path):
+    """Found by running the tool over its own README: `` `[x](y)` `` is one span, not an opener plus a stray link."""
+    root = tree(tmp_path, **{"README.md": "# R\n\nWriting `` `[x](y)` `` shows a literal backtick.\n"})
+    r = lint(root)
+    assert r.returncode == 0, f"double-backtick span leaked a link: {r.stdout}"
+
+
+def test_adjacent_spans_on_one_line_stay_separate(tmp_path):
+    """A lazy match must not swallow the gap between two spans and expose what sits between them."""
+    root = tree(tmp_path, **{"README.md": "# R\n\n`a` [real](gone.md) `b`\n"})
+    assert "missing file: gone.md" in lint(root).stdout
+
+
 def test_duplicate_headings_get_numeric_suffixes(tmp_path):
     root = tree(tmp_path, **{"README.md": "# R\n\n[a](a.md#dup) [b](a.md#dup-1)\n", "a.md": "# A\n\n## Dup\n\n## Dup\n"})
     assert lint(root).returncode == 0
