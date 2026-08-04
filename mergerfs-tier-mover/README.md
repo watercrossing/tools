@@ -1,6 +1,6 @@
 # mergerfs-tier-mover
 
-Demote the least-recently-modified files from the fast branch of a [mergerfs](https://github.com/trapexit/mergerfs) pool to the slow branch, until the fast branch is back above a free-space floor.
+Demote the least-recently-modified files from the fast branch of a [mergerfs](https://github.com/trapexit/mergerfs) pool to the slow branch, until the fast branch is back inside a free-space floor, a size budget, or both.
 
 A tiered pool built the usual way —
 
@@ -13,11 +13,11 @@ That is only half a tiering policy.
 Nothing ever moves the other way, so the SSD fills once and stays full: every write after that lands on the HDD no matter how cold the data occupying the SSD has become, and the pool degrades to "an HDD with a small, permanently stale cache".
 
 This is the missing half.
-It walks the fast branch oldest-mtime-first and moves files to the slow branch until the floor is satisfied.
+It walks the fast branch oldest-mtime-first and moves files to the slow branch until [whichever limit you set](#two-ways-to-say-enough) is satisfied.
 mergerfs keeps the logical path identical, so the application on top of the pool never sees a file move — no rescan, no broken links, no downtime, and no need to stop anything while it runs.
 
 ```bash
-mergerfs-tier-mover.py --hot /mnt/ssd/hot --cold /mnt/hdd/cold --min-free 600G
+mergerfs-tier-mover.py --hot /mnt/ssd/hot --cold /mnt/hdd/cold --min-free 600G      # or --max-hot 100G, or both
 ```
 
 Nothing is printed unless something happened; the summary goes to stderr, so it works as a cron job or a systemd timer either way.
@@ -72,22 +72,44 @@ So excluding them is not tuning, it is the difference between a mover that helps
 `--exclude` takes an `fnmatch` glob, matched against the path relative to `--hot`, and it matches whole subtrees: a pattern that matches a directory excludes everything under it (and prunes the walk).
 `*` also matches `/`, so `*/uploads` means "any path ending in `/uploads`, at any depth".
 
-## The floor
+## Two ways to say "enough"
 
-`--min-free` is measured on the **filesystem** holding the fast branch, not on the branch or btrfs subvolume alone.
+They answer different questions, and which you want is a real decision rather than a tuning detail.
+
+### `--min-free` — overflow
+
+*Keep the filesystem this empty.*
+Measured on the **filesystem** holding the fast branch, not on the branch or btrfs subvolume alone.
 That is deliberate: mergerfs's own `minfreespace` measures the same thing, so the mover and the pool agree on when the floor has been crossed.
-The consequence is worth stating plainly — if the fast branch shares a filesystem with anything else, both numbers are about that whole filesystem, and the mover cannot demote a single file until the *filesystem* dips below the floor, however full the branch's own data is.
 
-Set `--min-free` **above** the pool's `minfreespace`, not equal to it.
+The consequence is worth stating plainly — if the fast branch shares a filesystem with anything else, both numbers are about that whole filesystem, and the mover cannot demote a single file until the *filesystem* dips below the floor, however large the branch's own data has grown.
+This gives you "fast disk, with the slow one as overflow": everything stays fast until the fast disk is genuinely under pressure — from this data or from anything else sharing the filesystem — and only then does the oldest data move aside.
+
+Set it **above** the pool's `minfreespace`, not equal to it.
 Equal means the mover only starts once the pool is already spilling to the slow branch, and stops the moment it is one byte back over the line — so it runs every night and moves a trickle.
 A floor 100–200 G above `minfreespace` gives the pool headroom to keep writing to the fast branch between runs.
+
+### `--max-hot` — a working set
+
+*Keep the branch this small.*
+Measured on the branch itself, by `st_blocks` (so it is the compressed on-disk size, on a filesystem that compresses), and it counts excluded files too — they occupy the budget whether or not the mover may move them.
+
+This gives you real tiering: `--max-hot 100G` keeps roughly the most recent 100 GB on the fast disk and pushes everything older to the slow one, whether or not the fast disk is under any pressure at all.
+It fires continuously rather than only in emergencies.
+
+### Both
+
+Give both and the mover keeps going while **either** is unsatisfied, and stops when both are met.
+A budget with a floor underneath it is the useful combination: hold a working set normally, and demote past it if something else fills the disk.
+At least one is required — with neither there is no condition that would ever stop the run.
 
 ## Options
 
 | | |
 |---|---|
 | `--hot DIR` / `--cold DIR` | the two mergerfs *branches*, not the pool mountpoint. Refused if they are the same tree, nested, or on one filesystem (`--allow-same-filesystem` overrides, for testing) |
-| `--min-free SIZE` | required. Binary suffixes: `500G`, `2T`, `1048576` |
+| `--min-free SIZE` | demote until the branch's *filesystem* has this much free. Binary suffixes: `500G`, `2T`, `1048576` |
+| `--max-hot SIZE` | demote until the *branch* holds no more than this. At least one of the two is required; both may be given |
 | `--min-age MINUTES` | never touch a file modified this recently. Default 120 |
 | `--exclude GLOB` | repeatable. See above |
 | `--max-move SIZE` | stop after moving this much in one run — bounds the first run, or a nightly window |
@@ -95,7 +117,7 @@ A floor 100–200 G above `minfreespace` gives the pool headroom to keep writing
 | `--allow-open-files` | do not skip files held open by a process |
 | `--lock FILE` | exclusive `flock`; exits 0 if held. Default `/run/mergerfs-tier-mover.lock` |
 | `-n`, `--dry-run` | report what would move and stop |
-| `-v` / `-q` | one line per file / print nothing on success |
+| `-v` / `-q` | one line per file / print nothing on a *clean* run. `--quiet` still reports failures, so `--quiet` under cron mails you only when something went wrong |
 
 Exit status is 0 on a clean run (**including** "another instance holds the lock"), 1 if any file failed to copy, 2 on a usage error.
 

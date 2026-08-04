@@ -2,14 +2,19 @@
 # /// script
 # requires-python = ">=3.12"
 # ///
-"""Demote the least-recently-modified files from the fast branch of a mergerfs pool to the slow branch, until the fast branch is back above a
-free-space floor.
+"""Demote the least-recently-modified files from the fast branch of a mergerfs pool to the slow branch, until the fast branch is back inside a
+free-space floor (--min-free), a size budget (--max-hot), or both.
 
 A tiered mergerfs pool (`category.create=ff` over an SSD branch and an HDD branch, with `minfreespace=N`) writes new files to the SSD until it
 drops below the floor, then spills to the HDD. That is only half a tiering policy: nothing ever moves back the other way, so the SSD fills once
 and every subsequent write lands on the HDD regardless of how cold the data on the SSD has become. This is the missing half -- it walks the fast
-branch oldest-mtime-first and moves files to the slow branch until the floor is satisfied again. mergerfs keeps the logical path identical, so
+branch oldest-mtime-first and moves files to the slow branch until the limit is satisfied again. mergerfs keeps the logical path identical, so
 the application on top of the pool never sees a file move.
+
+The two limits answer different questions and the choice is a real one. --min-free measures the *filesystem* holding the branch, exactly as
+mergerfs's own minfreespace does, so the two agree on when the pool is under pressure; that gives "fast disk with the slow one as overflow", and
+it stays idle until the disk is genuinely full. --max-hot measures the branch itself, so it gives a working set: the newest N bytes stay fast and
+everything older is pushed out, pressure or no pressure.
 
 Why mtime and not atime: the branches are mounted `noatime` (atime writes are pure CoW metadata churn on btrfs, and they bloat snapshots), so
 mtime is the only age signal on disk. It is the wrong signal for anything that is read often but written once -- thumbnail and preview caches
@@ -63,6 +68,14 @@ def free_bytes(path):
     which is deliberate: mergerfs's own minfreespace measures the same thing, so the mover and the pool agree on when the floor is crossed."""
     st = os.statvfs(path)
     return st.f_bavail * st.f_frsize
+
+
+def branch_usage(path):
+    """On-disk bytes held by a branch. Counts files the excludes will never move -- they occupy the budget just the same -- and uses st_blocks
+    rather than st_size, because with btrfs compression the two differ a lot and a budget is about disk. Multiply-linked files are counted per
+    link, which overstates; they are skipped by the mover anyway."""
+    return sum(os.lstat(os.path.join(dirpath, name)).st_blocks * 512
+               for dirpath, _, filenames in os.walk(path, followlinks=False) for name in filenames if os.path.lexists(os.path.join(dirpath, name)))
 
 
 def open_inodes():
@@ -246,8 +259,10 @@ def parse_args(argv):
                                  epilog="Sizes take binary suffixes: 500G, 2T, 1048576.")
     ap.add_argument("--hot", required=True, metavar="DIR", help="fast branch (the mergerfs branch, not the pool mountpoint)")
     ap.add_argument("--cold", required=True, metavar="DIR", help="slow branch")
-    ap.add_argument("--min-free", required=True, type=parse_size, metavar="SIZE",
-                    help="stop once the fast branch's filesystem has this much free. Set it at or above the pool's minfreespace")
+    ap.add_argument("--min-free", type=parse_size, metavar="SIZE",
+                    help="demote until the fast branch's *filesystem* has this much free. Set it at or above the pool's minfreespace")
+    ap.add_argument("--max-hot", type=parse_size, metavar="SIZE",
+                    help="demote until the fast *branch* holds no more than this on disk. Combinable with --min-free; whichever is unsatisfied keeps the mover going")
     ap.add_argument("--min-age", type=float, default=120, metavar="MINUTES", help="never touch a file modified this recently (default: 120)")
     ap.add_argument("--exclude", action="append", default=[], metavar="GLOB",
                     help="skip paths matching GLOB, relative to --hot; matches whole subtrees. Repeatable")
@@ -262,6 +277,8 @@ def parse_args(argv):
     ap.add_argument("-v", "--verbose", action="store_true", help="one line per file")
     ap.add_argument("-q", "--quiet", action="store_true", help="print nothing on success")
     args = ap.parse_args(argv)
+    if args.min_free is None and args.max_hot is None:
+        ap.error("give --min-free, --max-hot, or both: there is otherwise no condition that would stop the mover")
     args.hot, args.cold = os.path.realpath(args.hot), os.path.realpath(args.cold)
     for label, path in (("--hot", args.hot), ("--cold", args.cold)):
         if not os.path.isdir(path):
@@ -275,7 +292,8 @@ def parse_args(argv):
 
 def main(argv=None):
     args = parse_args(argv)
-    log = (lambda *a: None) if args.quiet else (lambda *a: print(*a, file=sys.stderr, flush=True))
+    err = lambda *a: print(*a, file=sys.stderr, flush=True)      # failures are reported even under --quiet: silence is for a clean run only
+    log = (lambda *a: None) if args.quiet else err
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: globals().__setitem__("stop", True))
 
@@ -295,22 +313,30 @@ def main(argv=None):
         log("warning: not running as root, so the open-file check sees only this process's descriptors")
 
     start, free_start = time.monotonic(), free_bytes(args.hot)
-    moved_files = moved_bytes = failures = 0
+    used_start = branch_usage(args.hot) if args.max_hot is not None else None
+    moved_files = moved_bytes = moved_blocks = failures = 0
     reasons, open_fds, open_fds_at, created_dirs = {}, set(), 0.0, []
     staging = os.path.join(args.cold, STAGING)
     if not args.dry_run:
         os.makedirs(staging, mode=0o700, exist_ok=True)
 
+    def unsatisfied():
+        """Whichever target is still violated keeps the mover going; it stops when every one of them is met."""
+        free = free_start + moved_bytes if args.dry_run else free_bytes(args.hot)
+        return ((args.min_free is not None and free < args.min_free)
+                or (args.max_hot is not None and used_start - moved_blocks > args.max_hot))
+
     try:
-        if free_start >= args.min_free:
-            log(f"fast branch has {human(free_start)} free, floor is {human(args.min_free)}: nothing to demote")
+        if not unsatisfied():
+            targets = [f"{human(free_bytes(args.hot))} free against a {human(args.min_free)} floor"] if args.min_free is not None else []
+            targets += [f"branch holds {human(used_start)} against a {human(args.max_hot)} budget"] if args.max_hot is not None else []
+            log("nothing to demote: " + " and ".join(targets))
         else:
             found = list(candidates(args.hot, args.min_age * 60, args.exclude, time.time()))
             tallies = found.pop()
             reasons.update({k: v for k, v in tallies.items() if v})
             for _, rel, st in sorted(found):
-                free = free_start + moved_bytes if args.dry_run else free_bytes(args.hot)
-                if stop or free >= args.min_free or (args.max_move and moved_bytes >= args.max_move):
+                if stop or (args.max_move and moved_bytes >= args.max_move) or not unsatisfied():
                     break
                 if not args.allow_open_files:
                     if time.monotonic() - open_fds_at > OPEN_FD_MAX_AGE:
@@ -327,7 +353,7 @@ def main(argv=None):
                         why = move_one(args.hot, args.cold, staging, rel, st, args.checksum, created_dirs)
                     except OSError as e:
                         why, failures = f"error: {e.strerror}", failures + 1
-                        log(f"failed  {rel}: {e}")
+                        err(f"failed  {rel}: {e}")
                 if why:
                     key = why.split(":")[0]
                     reasons[key] = reasons.get(key, 0) + 1
@@ -336,6 +362,7 @@ def main(argv=None):
                         log(f"skip    {rel}: {why}")
                 else:
                     moved_files, moved_bytes = moved_files + 1, moved_bytes + st.st_size
+                    moved_blocks += st.st_blocks * 512       # what the *branch* got back, which compression makes different from st_size
                     if args.verbose:
                         log(f"{'would move' if args.dry_run else 'moved'}  {rel}  ({human(st.st_size)})")
             pruned = prune_empty_dirs(args.hot, args.cold, args.dry_run)
@@ -355,9 +382,11 @@ def main(argv=None):
             os.close(lock_fd)
 
     detail = ", ".join(f"{v} {k}" for k, v in sorted(reasons.items()))
-    log(f"{'would move' if args.dry_run else 'moved'} {moved_files} files, {human(moved_bytes)} in {time.monotonic() - start:.1f}s; "
-        f"free {human(free_start)} -> {human(free_bytes(args.hot))}, floor {human(args.min_free)}"
-        + (f" ({detail})" if detail else "") + (" [interrupted]" if stop else ""))
+    targets = [f"free {human(free_start)} -> {human(free_bytes(args.hot))}, floor {human(args.min_free)}"] if args.min_free is not None else []
+    targets += [f"branch {human(used_start)} -> {human(used_start - moved_blocks)}, budget {human(args.max_hot)}"] if args.max_hot is not None else []
+    summary = (f"{'would move' if args.dry_run else 'moved'} {moved_files} files, {human(moved_bytes)} in {time.monotonic() - start:.1f}s; "
+               + "; ".join(targets) + (f" ({detail})" if detail else "") + (" [interrupted]" if stop else ""))
+    (err if failures else log)(summary)
     return 1 if failures else 0
 
 

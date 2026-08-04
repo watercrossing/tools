@@ -234,5 +234,56 @@ def test_a_bad_size_is_a_usage_error(tmp_path):
     assert run(hot, cold, "--min-free", "lots").returncode == 2
 
 
+def test_no_target_at_all_is_a_usage_error(tmp_path):
+    hot, cold = branches(tmp_path, {"a.txt": "a"})
+    r = run(hot, cold)
+    assert r.returncode == 2 and "no condition that would stop the mover" in r.stderr
+
+
+def test_max_hot_demotes_down_to_a_branch_budget(tmp_path):
+    """The bob case inverted: no free-space pressure at all, so only the branch budget can be driving this."""
+    hot, cold = branches(tmp_path, {f"f{i}.bin": "x" * 200_000 for i in range(10)})
+    used = mover.branch_usage(str(hot))
+    r = run(hot, cold, "--max-hot", str(used // 2))
+    assert r.returncode == 0, r.stderr
+    assert mover.branch_usage(str(hot)) <= used // 2
+    assert len(tree(cold)) + len(tree(hot)) == 10                      # nothing lost, just redistributed
+    assert "budget" in r.stderr and "floor" not in r.stderr
+
+
+def test_a_satisfied_budget_moves_nothing(tmp_path):
+    hot, cold = branches(tmp_path, {"a.txt": "a"})
+    r = run(hot, cold, "--max-hot", "1T")
+    assert r.returncode == 0 and tree(cold) == {} and "nothing to demote" in r.stderr
+
+
+def test_max_hot_demotes_oldest_first(tmp_path):
+    hot, cold = branches(tmp_path, {"old.bin": "o" * 200_000, "new.bin": "n" * 200_000})
+    os.utime(hot / "new.bin", (time.time() - 7200, time.time() - 7200))
+    os.utime(hot / "old.bin", (time.time() - 86400, time.time() - 86400))
+    assert run(hot, cold, "--max-hot", str(mover.branch_usage(str(hot)) // 2)).returncode == 0
+    assert list(tree(cold)) == ["old.bin"] and list(tree(hot)) == ["new.bin"]
+
+
+def test_either_unsatisfied_target_keeps_it_going(tmp_path):
+    """--min-free is met from the outset here, so a run that still demotes proves the two conditions are OR-ed, not AND-ed."""
+    hot, cold = branches(tmp_path, {f"f{i}.bin": "x" * 200_000 for i in range(4)})
+    r = run(hot, cold, "--min-free", "0", "--max-hot", "1")
+    assert r.returncode == 0 and len(tree(cold)) == 4 and tree(hot) == {}
+    assert "floor" in r.stderr and "budget" in r.stderr
+
+
+def test_quiet_is_silent_on_success_but_not_on_failure(tmp_path):
+    hot, cold = branches(tmp_path, {"u/files/a.txt": "aaa"})
+    assert run(hot, cold, "--min-free", HUGE, "--quiet").stderr == ""
+    (tmp_path / "second").mkdir()
+    hot2, cold2 = branches(tmp_path / "second", {"u/files/a.txt": "aaa"})
+    os.chmod(hot2 / "u/files/a.txt", 0o000)                            # unreadable source -> the copy fails
+    if os.geteuid() == 0:
+        pytest.skip("root reads regardless of mode")
+    r = run(hot2, cold2, "--min-free", HUGE, "--quiet")
+    assert r.returncode == 1 and "failed" in r.stderr and "moved 0 files" in r.stderr
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
