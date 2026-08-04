@@ -262,7 +262,7 @@ def parse_args(argv):
     ap.add_argument("--min-free", type=parse_size, metavar="SIZE",
                     help="demote until the fast branch's *filesystem* has this much free. Set it at or above the pool's minfreespace")
     ap.add_argument("--max-hot", type=parse_size, metavar="SIZE",
-                    help="demote until the fast *branch* holds no more than this on disk. Combinable with --min-free; whichever is unsatisfied keeps the mover going")
+                    help="demote until the fast *branch* holds no more than this on disk. Combines with --min-free: either unsatisfied keeps it going")
     ap.add_argument("--min-age", type=float, default=120, metavar="MINUTES", help="never touch a file modified this recently (default: 120)")
     ap.add_argument("--exclude", action="append", default=[], metavar="GLOB",
                     help="skip paths matching GLOB, relative to --hot; matches whole subtrees. Repeatable")
