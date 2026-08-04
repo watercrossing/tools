@@ -277,6 +277,7 @@ def parse_args(argv):
     ap.add_argument("-v", "--verbose", action="store_true", help="one line per file")
     ap.add_argument("-q", "--quiet", action="store_true", help="print nothing on success")
     args = ap.parse_args(argv)
+    args.quiet = args.quiet and not args.verbose     # a wrapper script can bake in --quiet and still be overridden by --verbose on the command line
     if args.min_free is None and args.max_hot is None:
         ap.error("give --min-free, --max-hot, or both: there is otherwise no condition that would stop the mover")
     args.hot, args.cold = os.path.realpath(args.hot), os.path.realpath(args.cold)

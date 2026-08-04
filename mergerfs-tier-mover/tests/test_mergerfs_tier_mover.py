@@ -203,6 +203,12 @@ def test_a_file_written_during_its_own_copy_is_abandoned_not_moved(tmp_path):
     assert not (cold / "u/files/a.txt").exists() and list(staging.iterdir()) == []
 
 
+def test_verbose_overrides_a_baked_in_quiet(tmp_path):
+    hot, cold = branches(tmp_path, {"u/files/a.txt": "aaa"})
+    r = run(hot, cold, "--min-free", HUGE, "--quiet", "--verbose", "--dry-run")
+    assert "would move  u/files/a.txt" in r.stderr
+
+
 def test_no_staging_directory_is_left_behind(tmp_path):
     hot, cold = branches(tmp_path, {"u/files/a.txt": "aaa"})
     assert run(hot, cold, "--min-free", HUGE).returncode == 0
