@@ -1,0 +1,14 @@
+# Example map for sanitise.sh — copy to ~/.config/sanitise/map, chmod 600, and put your own secrets in it.
+#
+# One replacement per line: the real secret, a single TAB, then the placeholder that stands in for it.
+# A tab is the separator because it is the one character a password essentially never contains, unlike
+# space, "=", ":", "#" or a quote.
+#
+# A line starting with "#" that contains no tab is a comment, so a secret may itself start with "#".
+# Placeholders must be unique, and should be strings that do not otherwise appear in your configs —
+# sanitise.sh warns if one does, because reversing would then invent a credential where there was none.
+
+s3cr3t-db-pass!	password1
+hunter2	password2
+p@ss*w[ord?	password3
+AKIAIOSFODNN7EXAMPLE	AWS_ACCESS_KEY_ID_PLACEHOLDER

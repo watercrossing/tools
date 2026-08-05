@@ -26,6 +26,10 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 
 - **[mergerfs-tier-mover](mergerfs-tier-mover/)** — the missing half of a tiered [mergerfs](https://github.com/trapexit/mergerfs) pool: demote the least-recently-modified files from the SSD branch to the HDD branch until the SSD is back above a free-space floor. `category.create=ff` + `minfreespace` only ever fills the fast branch, so without a mover the SSD fills once and every later write lands on the HDD however cold the data holding the SSD has become. Safe to run against a live pool — the copy is fsynced and renamed into place before the source is unlinked, files that are recent, held open, or written during their own copy are skipped, and hard links are never unshared.
 
+## Secrets
+
+- **[config-password-sanitisation](config-password-sanitisation/)** — swap the real secrets in a config file for stable placeholders so it can be pasted into a ticket, a chat or an LLM prompt, then swap them back so the answer you get returned is a file you can deploy. Redacting is a one-way door; a map of secret → placeholder makes the round trip byte-exact. Substitution is one leftmost-longest pass, so a placeholder cannot be eaten by the next replacement and `top` cannot bite the front off `topsecret`, and the sanitised file is grepped for every secret before you are told it is safe to send. `--check` reports secrets by placeholder, never by value, and exits non-zero — a pre-commit hook.
+
 ## Documentation
 
 - **[markdown-docs-lint](markdown-docs-lint/)** — lint a Markdown docs tree for the failures that break silently: dead relative links, dead `#anchors`, pages nothing links to, and files grown too long to read whole. Anchors are the point: rename a heading and every inbound `#fragment` dies with no error, no visual change, and a one-line `git diff` that does not include the files that broke. Handles the traps a hand-rolled checker gets wrong — GitHub's slug leaves *two* hyphens where an em dash sat between spaces, code fences are not headings, and backticked text still counts toward a slug. Exits non-zero, so it works as a pre-commit hook.
