@@ -12,6 +12,7 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 - **[teams-chat-to-markdown](teams-chat-to-markdown/)** — convert a copied Teams meeting-chat HTML export into clean Markdown, preserving authors, timestamps, reply-quotes (as blockquotes), reactions, emoji, and links.
 - **[teams-transcript-to-markdown](teams-transcript-to-markdown/)** — capture a Teams meeting transcript from the browser and convert it to Markdown, with consecutive speaker turns collapsed and a gap/completeness check for missing entries.
 - **[teams-slidegrab](teams-slidegrab/)** — recover a deck that was shared live via PowerPoint Live but never handed over as a file: from a recording (OBS or Microsoft Stream), read the on-screen `Slide X of Y` counter with local OCR and save one clean screenshot per slide. CPU-only; nothing leaves the machine.
+- **[obs-interview-transcript](obs-interview-transcript/)** — transcribe an interview you recorded yourself with OBS, rather than depending on Teams for it: Desktop Audio on track 1, your microphone on track 2, out comes one speaker-attributed transcript. The tracks overlap, because your mic also hears the far end through your speakers, but the desktop track *cannot* contain your voice — so gating the mic against it separates the two, per word rather than per segment. Local Whisper + pyannote; nothing leaves the machine, which is the point when the recording is research data.
 
 ## Deployment
 
