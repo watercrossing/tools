@@ -42,6 +42,58 @@ Prefer a margin note? A `todonotes` variant (add `\usepackage[textwidth=3cm]{tod
 \providecommand{\olc}[4]{\todo[color=yellow!40,size=\scriptsize]{\textbf{#2}, #1: #4}}
 ```
 
+#### Per-author colours and display names
+
+On a document with several reviewers the flat version gets hard to skim.
+This variant keeps a small table of authors and gives each one a colour and a short display name, so `Comment by Carlos Rombaldo Junior` becomes a blue `Comment by Carlos`.
+It also sets each comment as its own small paragraph and stops the annotated line below it from being indented, so the comment reads as a block rather than as part of your prose:
+
+```latex
+\usepackage{xcolor}
+\usepackage{etoolbox}   % for \csdef
+
+% \olcauthor{author exactly as the exporter writes it}{display name}{colour}
+\newcommand{\olcauthor}[3]{%
+  \csdef{olc@name@\detokenize{#1}}{#2}%
+  \csdef{olc@color@\detokenize{#1}}{#3}%
+}
+
+\olcauthor{ingolfbecker7}{Ingolf}{purple}
+\olcauthor{Ingolf Becker}{Ingolf}{orange}
+\olcauthor{Carlos Rombaldo Junior}{Carlos}{blue}
+
+\makeatletter
+\newcommand{\olc@lookup}[1]{%
+  \ifcsname olc@color@\detokenize{#1}\endcsname
+    \edef\olc@col{\csname olc@color@\detokenize{#1}\endcsname}%
+    \expandafter\let\expandafter\olc@who\csname olc@name@\detokenize{#1}\endcsname
+  \else
+    \def\olc@col{black}%
+    \def\olc@who{#1}%   unknown author: fall back to the raw name
+  \fi}
+
+\providecommand{\olc}[4]{%
+  \par\smallskip
+  \begingroup
+    \olc@lookup{#2}%
+    \color{\olc@col}%
+    \noindent\textbf{Comment by \olc@who\ on #1} on ``#3'': #4%
+  \par
+  \endgroup
+  \smallskip
+  \@afterindentfalse\@afterheading
+}
+\makeatother
+```
+
+**The key must match `#2` exactly.** The exporter writes the author as Overleaf's `first_name last_name` (trimmed), falling back to the account's email, then to `unknown` — it is never a shortened or normalised username.
+So the key for a reviewer whose account reads *Carlos Rombaldo Junior* is the whole three-word string, not `carlos`; an account with only a first name set gives a one-word key like `ingolfbecker7`.
+The quickest way to get them right is to run the sync once and copy the second argument out of the `\olc` lines it writes.
+
+An author with no `\olcauthor` entry is not an error: they render in black under their raw name, so you can add entries as reviewers appear.
+Accented names work as long as you type them as literal UTF-8, exactly as the exporter does (`\olcauthor{José Álvarez}{José}{olive}`), not as `Jos\'e`.
+The `\detokenize` calls are what let the key survive LaTeX-escaping — without them an author string containing an escaped character (most often a `_` in an email-fallback name, as `a\_b@example.com`) breaks the `\csname` lookup with `Missing \endcsname inserted`.
+
 The macro is injected on its **own line(s), immediately before the line that contains the highlighted span**, so it sits next to the text it refers to without interrupting the sentence.
 The highlighted text is passed as `#3` purely for reference; it is **truncated** to `first two [...] last two` words when it runs longer than five words, and may be empty for older comments (see below).
 
