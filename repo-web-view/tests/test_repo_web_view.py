@@ -25,8 +25,10 @@ def sample_repo(tmp_path):
     src = tmp_path / "repo"
     (src / "toolA").mkdir(parents=True)
     (src / ".git").mkdir()
-    (src / "README.md").write_text("# Sample\n\nWelcome to **sample**. See [toolA](toolA/) and [notes](notes.txt).\n",
-                                   encoding="utf-8")
+    (src / "README.md").write_text("# Sample\n\nWelcome to **sample**. See [toolA](toolA/) and [notes](notes.txt).\n\n"
+                                   "Also [docs](docs.md#bit), [nested](toolA/README.md), [gone](missing.md) and "
+                                   "[remote](https://example.com/x.md).\n", encoding="utf-8")
+    (src / "docs.md").write_text("# Docs\n\nA standalone page, not a README.\n", encoding="utf-8")
     (src / "notes.txt").write_text("plain file\n", encoding="utf-8")
     (src / "hook.php").write_text('<?php echo "SHOULD NOT RUN"; ?>\n', encoding="utf-8")
     (src / ".git" / "config").write_text("secret\n", encoding="utf-8")
@@ -127,6 +129,58 @@ def test_nested_output_rejected(sample_repo):
     assert "nested" in (r.stderr + r.stdout).lower()
 
 
+def test_markdown_downloads_by_default(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out)
+    assert not (out / "docs.md.html").exists()
+    page = (out / "index.html").read_text(encoding="utf-8")
+    assert 'href="docs.md"' in page and "docs.md.html" not in page
+
+
+def test_render_markdown_makes_a_page_per_md(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out, "--render-markdown")
+    for page in (out / "docs.md.html", out / "README.md.html", out / "toolA" / "README.md.html"):
+        assert page.is_file()
+    assert (out / "docs.md").is_file()                                  # the source file is still published
+    assert "A standalone page" in (out / "docs.md.html").read_text(encoding="utf-8")
+
+
+def test_render_markdown_listing_links_to_the_page(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out, "--render-markdown")
+    listing = (out / "index.html").read_text(encoding="utf-8").split('class="listing"')[1]
+    assert '<a href="docs.md.html">docs.md</a>' in listing              # linked to the page, labelled as the file
+    assert '<a href="notes.txt">notes.txt</a>' in listing               # non-markdown still downloads
+    assert "docs.md.html</a>" not in listing                            # and the page is not listed as a file of its own
+
+
+def test_render_markdown_page_has_breadcrumb_and_listing(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out, "--render-markdown")
+    page = (out / "toolA" / "README.md.html").read_text(encoding="utf-8")
+    assert '<a href="../">repo</a>' in page and '<a href="./">toolA</a>' in page
+    assert '<span class="here">README.md</span>' in page
+    listing = page.split('class="listing"')[1]
+    assert '<a href="toolA.py">toolA.py</a>' in listing                 # same listing as the folder's index
+
+
+def test_render_markdown_rewrites_md_links(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out, "--render-markdown")
+    body = (out / "index.html").read_text(encoding="utf-8").split('class="listing"')[0]
+    assert 'href="docs.md.html#bit"' in body                            # fragment kept
+    assert 'href="toolA/README.md.html"' in body                        # relative path into a subfolder
+    assert 'href="missing.md"' in body                                  # no such file -> left alone
+    assert 'href="https://example.com/x.md"' in body                    # remote -> left alone
+
+
+def test_render_markdown_footer_note_on_md_pages(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    build(sample_repo, out, "--render-markdown", "--footer-note", "a95daf6")
+    assert "a95daf6" in (out / "docs.md.html").read_text(encoding="utf-8").rsplit("<footer>", 1)[1]
+
+
 def _free_port():
     with socket.socket() as s:
         s.bind(("", 0))
@@ -157,6 +211,8 @@ def test_serve_forces_file_download_but_renders_folder(sample_repo, tmp_path):
         with urllib.request.urlopen(base + "/hook.php") as r:           # a script downloads raw, un-executed
             assert "attachment" in (r.headers.get("Content-Disposition") or "")
             assert "<?php" in r.read().decode()
+        with urllib.request.urlopen(base + "/docs.md") as r:            # markdown downloads without the flag
+            assert "attachment" in (r.headers.get("Content-Disposition") or "")
         with urllib.request.urlopen(base + "/toolA/toolA.html") as r:   # an .html tool renders inline
             assert "attachment" not in (r.headers.get("Content-Disposition") or "")
             assert "toolA runs" in r.read().decode()
@@ -164,6 +220,24 @@ def test_serve_forces_file_download_but_renders_folder(sample_repo, tmp_path):
             body = r.read().decode()
             assert "attachment" not in (r.headers.get("Content-Disposition") or "")
         assert "<h1" in body
+    finally:
+        proc.terminate()
+        proc.wait(timeout=15)
+
+
+def test_serve_renders_markdown_pages(sample_repo, tmp_path):
+    out = tmp_path / "site"
+    port = _free_port()
+    proc = subprocess.Popen(["uv", "run", str(SCRIPT), str(sample_repo), str(out),
+                             "--force", "--render-markdown", "--serve", str(port)])
+    try:
+        base = f"http://localhost:{port}"
+        _wait(base + "/")
+        with urllib.request.urlopen(base + "/docs.md.html") as r:       # the generated page renders inline
+            assert "attachment" not in (r.headers.get("Content-Disposition") or "")
+            assert "A standalone page" in r.read().decode()
+        with urllib.request.urlopen(base + "/docs.md") as r:            # the source file still downloads
+            assert "attachment" in (r.headers.get("Content-Disposition") or "")
     finally:
         proc.terminate()
         proc.wait(timeout=15)

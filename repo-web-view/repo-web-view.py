@@ -15,12 +15,17 @@ For every folder it writes an index.html that shows the folder's rendered README
 self-contained (CSS inlined, README images embedded as data URIs), so the only files
 served as HTML are the generated index pages — everything else is meant to download.
 
+With --render-markdown every .md file gets a page of its own too (NAME.md.html, same
+layout: rendered markdown above the folder listing), and links to it — from the listing
+and from inside other markdown — point at that page instead of downloading the source.
+
 A generated .htaccess makes Apache force `Content-Disposition: attachment` on every
 file except those index pages, so clicking any file downloads it while folders render.
 
 Run (deps auto-installed from the inline metadata above):
     uv run repo-web-view.py SOURCE OUTPUT            # or ./repo-web-view.py SOURCE OUTPUT
     uv run repo-web-view.py . ../site --serve        # build, then preview at http://localhost:8000
+    uv run repo-web-view.py . ../site --render-markdown   # every .md renders instead of downloading
 
 SOURCE is copied into OUTPUT (dotfiles skipped) and an index.html is generated in every
 folder. OUTPUT must not be the same as, or nested inside, SOURCE. Use --force to overwrite
@@ -41,6 +46,8 @@ from pygments.util import ClassNotFound
 README_NAME = "readme.md"
 INDEX_NAME = "index.html"
 HTACCESS_NAME = ".htaccess"
+MD_SUFFIX = ".md"
+MD_PAGE_SUFFIX = ".md.html"   # page generated for FILE.md, next to it (an .html name, so it renders)
 
 # --------------------------------------------------------------------- markdown rendering
 def _highlight(code, lang, _attrs):
@@ -84,6 +91,23 @@ def inline_images(html_str, base_dir):
         return f"{pre}data:{_img_mime(path)};base64,{b64}{post}"
     return re.sub(r'(<img\b[^>]*?\bsrc=")([^"]+)(")', repl, html_str, flags=re.I)
 
+def link_md_pages(html_str, base_dir):
+    # With --render-markdown a link to a local FILE.md should open the page generated for it, not
+    # download the source; any query/fragment is kept, so cross-file #anchors still land.
+    def repl(m):
+        pre, href, post = m.group(1), m.group(2), m.group(3)
+        if re.match(r"^[a-z][a-z0-9+.\-]*:", href, re.I) or href.startswith(("//", "#", "/")):
+            return m.group(0)
+        path, tail = re.match(r"([^#?]*)(.*)", href).groups()
+        if not path.lower().endswith(MD_SUFFIX) or not (base_dir / unquote(path)).is_file():
+            return m.group(0)
+        return f"{pre}{path}.html{tail}{post}"
+    return re.sub(r'(<a\b[^>]*?\bhref=")([^"]*)(")', repl, html_str, flags=re.I)
+
+def render_markdown(path, md, render_md):
+    html_str = inline_images(md.render(path.read_text("utf-8", "replace")), path.parent)
+    return link_md_pages(html_str, path.parent) if render_md else html_str
+
 # --------------------------------------------------------------------- page assembly
 def human_size(n):
     size = float(n)
@@ -92,17 +116,17 @@ def human_size(n):
             return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024
 
-def breadcrumb_html(title, parts):
-    n = len(parts)
-    items = [(title, "../" * n if n else "./")]
-    items += [(part, "../" * (n - i - 1) if n - i - 1 else "./") for i, part in enumerate(parts)]
+def breadcrumb_html(labels, depth):
+    # labels: the root title, then one per path component, the last of them being this page. depth is how many
+    # folders separate the page from the root — a file page sits in its folder, so it shares that folder's links.
     out = []
-    for i, (label, href) in enumerate(items):
-        esc = html.escape(label)
-        out.append(f'<span class="here">{esc}</span>' if i == len(items) - 1 else f'<a href="{href}">{esc}</a>')
+    for i, label in enumerate(labels):
+        esc, up = html.escape(label), depth - i
+        out.append(f'<span class="here">{esc}</span>' if i == len(labels) - 1
+                   else f'<a href="{"../" * up if up else "./"}">{esc}</a>')
     return '<span class="sep">/</span>'.join(out)
 
-def listing_rows(entries):
+def listing_rows(entries, render_md=False):
     rows = []
     for entry in entries:
         name = html.escape(entry.name)
@@ -110,8 +134,9 @@ def listing_rows(entries):
             rows.append(f'<tr><td class="icon">\U0001F4C1</td>'
                         f'<td class="name"><a href="{quote(entry.name)}/">{name}/</a></td><td class="size"></td></tr>')
         else:
+            href = quote(entry.name) + (".html" if render_md and is_markdown(entry) else "")
             rows.append(f'<tr><td class="icon">\U0001F4C4</td>'
-                        f'<td class="name"><a href="{quote(entry.name)}">{name}</a></td>'
+                        f'<td class="name"><a href="{href}">{name}</a></td>'
                         f'<td class="size">{human_size(entry.stat().st_size)}</td></tr>')
     return "\n".join(rows)
 
@@ -123,16 +148,16 @@ def footer_note_html(note, url):
     label = html.escape(note)
     return " · " + (f'<a href="{html.escape(url)}">{label}</a>' if url else label)
 
-def build_page(title, parts, readme_html, entries, note_html=""):
-    crumbs = breadcrumb_html(title, parts)
-    readme_block = f'<article class="markdown-body">\n{readme_html}\n</article>\n' if readme_html else ""
-    rows = listing_rows(entries) or '<tr><td class="icon">—</td><td class="name">empty folder</td><td></td></tr>'
-    here = html.escape(" / ".join([title, *parts]))
+def build_page(labels, depth, body_html, entries, note_html="", render_md=False):
+    crumbs = breadcrumb_html(labels, depth)
+    body_block = f'<article class="markdown-body">\n{body_html}\n</article>\n' if body_html else ""
+    rows = listing_rows(entries, render_md) or '<tr><td class="icon">—</td><td class="name">empty folder</td><td></td></tr>'
+    here = html.escape(" / ".join(labels))
     return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{here}</title>\n<style>\n{STYLE}\n</style>\n</head>\n<body>\n"
-        f'<div class="wrap">\n<nav class="breadcrumb">{crumbs}</nav>\n{readme_block}'
+        f'<div class="wrap">\n<nav class="breadcrumb">{crumbs}</nav>\n{body_block}'
         f'<section class="listing"><h2 class="listing-title">Contents</h2>\n'
         f"<table><tbody>\n{rows}\n</tbody></table></section>\n"
         f'<footer>Generated by repo-web-view{note_html}</footer>\n</div>\n</body>\n</html>\n'
@@ -142,18 +167,32 @@ def build_page(title, parts, readme_html, entries, note_html=""):
 def find_readme(dir_path):
     return next((c for c in dir_path.iterdir() if c.is_file() and c.name.lower() == README_NAME), None)
 
+def is_markdown(path):
+    return path.is_file() and path.suffix.lower() == MD_SUFFIX
+
 def list_entries(dir_path):
-    entries = [e for e in dir_path.iterdir() if not e.name.startswith(".") and e.name != INDEX_NAME]
+    # Generated pages are part of the site, not of the tree being listed: index.html, and any NAME.md.html
+    # that belongs to a NAME.md sitting beside it.
+    entries = [e for e in dir_path.iterdir() if not e.name.startswith(".") and e.name != INDEX_NAME
+               and not (e.name.lower().endswith(MD_PAGE_SUFFIX) and (dir_path / e.name[:-len(".html")]).is_file())]
     return sorted(entries, key=lambda e: (e.is_file(), e.name.lower()))
 
-def generate(out_root, title, md, note_html=""):
-    dirs = [out_root, *(p for p in out_root.rglob("*") if p.is_dir())]
-    for d in dirs:
-        readme = find_readme(d)
-        readme_html = inline_images(md.render(readme.read_text("utf-8", "replace")), d) if readme else ""
+def generate(out_root, title, md, note_html="", render_md=False):
+    pages = 0
+    for d in [out_root, *(p for p in out_root.rglob("*") if p.is_dir())]:
+        entries = list_entries(d)   # read before anything is written into d, so a page never lists itself
         parts = list(d.relative_to(out_root).parts)
-        (d / INDEX_NAME).write_text(build_page(title, parts, readme_html, list_entries(d), note_html), encoding="utf-8")
-    return len(dirs)
+        readme = find_readme(d)
+        readme_html = render_markdown(readme, md, render_md) if readme else ""
+        (d / INDEX_NAME).write_text(build_page([title, *parts], len(parts), readme_html, entries, note_html, render_md),
+                                    encoding="utf-8")
+        pages += 1
+        if render_md:
+            for f in (e for e in entries if is_markdown(e)):
+                page = build_page([title, *parts, f.name], len(parts), render_markdown(f, md, True), entries, note_html, True)
+                f.with_name(f.name + ".html").write_text(page, encoding="utf-8")   # FILE.md -> FILE.md.html, beside it
+                pages += 1
+    return pages
 
 def copy_tree(src, out, excludes):
     def ignore(_dir, names):
@@ -214,6 +253,8 @@ def main(argv=None):
                     help="text to append to every page's footer, e.g. the commit hash a deploy built (empty: no note)")
     ap.add_argument("--footer-note-url", default="", metavar="URL",
                     help="make --footer-note a link to this URL, e.g. that commit on GitHub")
+    ap.add_argument("--render-markdown", action="store_true",
+                    help="give every .md file a rendered page (NAME.md.html) and link to it, instead of downloading it")
     ap.add_argument("--no-htaccess", action="store_true", help="do not write the force-download .htaccess")
     ap.add_argument("--force", action="store_true", help="overwrite OUTPUT if it already exists")
     ap.add_argument("--serve", nargs="?", type=int, const=8000, metavar="PORT",
@@ -232,7 +273,7 @@ def main(argv=None):
 
     copy_tree(src, out, args.exclude)
     n = generate(out, args.title or src.name or "root", make_markdown(),
-                 footer_note_html(args.footer_note.strip(), args.footer_note_url.strip()))
+                 footer_note_html(args.footer_note.strip(), args.footer_note_url.strip()), args.render_markdown)
     if not args.no_htaccess:
         (out / HTACCESS_NAME).write_text(HTACCESS, encoding="utf-8")
     print(f"Generated {n} page(s) into {out}")

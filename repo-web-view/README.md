@@ -3,6 +3,7 @@
 Publish a directory tree (a repo, a folder of docs) as a **static, GitHub-style browsable site**.
 For every folder it generates an `index.html` that shows the folder's **rendered `README.md`** at the top, and **below it a listing** of that folder's contents.
 Folders open as more rendered pages, and the repo's self-contained **`.html` tools open and run in the browser**; **every other file downloads** rather than displaying.
+With `--render-markdown`, every `.md` file in the tree gets a rendered page too, so clicking one reads it instead of downloading it.
 
 It is built to sit behind plain **Apache + PHP-FPM** — the same "I have an SSH login and `/var/www`" box that [github-push-deploy](../github-push-deploy/) targets — and pairs with that tool as the *publish* step: a push regenerates the browsable site.
 
@@ -10,6 +11,7 @@ It is built to sit behind plain **Apache + PHP-FPM** — the same "I have an SSH
 
 - One `index.html` per folder: breadcrumb → rendered `README.md` (if the folder has one) → a table listing the folder's entries (directories first, then files with sizes).
 - Fully **self-contained pages**: the CSS is inlined and any local images referenced by a README are embedded as `data:` URIs. Nothing the pages need is a separate file that could get caught by the download rule.
+- With `--render-markdown`, one **`NAME.md.html`** beside every `NAME.md`: the same page layout with that file rendered where the README would be, and the folder's listing underneath. The listing links to it, and so do `.md` links inside rendered markdown.
 - A single **`.htaccess`** at the root that (1) forces `Content-Disposition: attachment` on every file *except* `.html` — the generated index pages and the self-contained HTML tools, which render — and (2) disables server-side handlers (PHP-FPM, CGI, …) so a `.php`/`.cgi`/… in the tree downloads as source instead of executing. The whole download-vs-render policy lives in one place.
 
 Markdown is rendered with CommonMark + GitHub niceties: tables, strikethrough, task lists, autolinks, fenced code with **syntax highlighting** (Pygments), and GitHub-compatible heading anchors so in-page `#links` work.
@@ -40,6 +42,22 @@ Rebuild over an existing output (what a deploy does) with `--force`:
 uv run repo-web-view.py /var/www/tools/repo /var/www/tools/html --force
 ```
 
+## Rendering every markdown file
+
+By default only `README.md` is rendered (into its folder's `index.html`); any other `.md` in the tree is a file like any other, so clicking it downloads it.
+`--render-markdown` changes that:
+
+```bash
+uv run repo-web-view.py . ../tools-site --render-markdown
+```
+
+- Every `NAME.md` gets a page next to it called `NAME.md.html` — breadcrumb (ending in the file's name), the rendered markdown, then the same listing the folder's `index.html` shows, so you can carry on browsing from where you landed.
+- The file listing links `NAME.md` to that page. The row still shows the real file name and its size; the generated pages are not listed as entries of their own.
+- Links **inside** rendered markdown that point at a local `.md` file are rewritten to its page (`[docs](docs.md#usage)` → `docs.md.html#usage`), so a README's cross-references open rendered rather than downloading. Remote, absolute (`/…`) and dangling links are left exactly as written.
+- The `.md` source files are still published and still download — `NAME.md.html` is an addition, not a replacement, so a "view source" link to `NAME.md` keeps working.
+
+`README.md` gets a page of its own too, even though its content is already at the top of the folder's `index.html`; that is what makes a link to `../other-tool/README.md` render.
+
 ## Options
 
 | Flag | Default | Meaning |
@@ -49,6 +67,7 @@ uv run repo-web-view.py /var/www/tools/repo /var/www/tools/html --force
 | `--force` | off | Overwrite `OUTPUT` if it already exists (it is removed and rebuilt). |
 | `--footer-note TEXT` | — | Text appended to every page's footer, e.g. the commit a deploy built. Escaped, so it is text and nothing else; empty means no note. |
 | `--footer-note-url URL` | — | Turn `--footer-note` into a link to this URL (ignored without a note). |
+| `--render-markdown` | off | Give every `.md` file a rendered page (`NAME.md.html`) and link to it from the listing, instead of downloading it. |
 | `--no-htaccess` | off | Don't write the force-download `.htaccess` (e.g. you configure the rule in the vhost). |
 | `--serve [PORT]` | — | After building, serve `OUTPUT` with production-like download headers (default port `8000`). Put it last on the command line. |
 
@@ -101,6 +120,7 @@ mv "$BASE_DIR/html-new" "$BASE_DIR/html"
 rm -rf "$BASE_DIR/html-old"
 ```
 
+Add `--render-markdown` to that call if you want every `.md` in the repo readable in the browser rather than downloadable.
 The deploy user needs `uv` on its `PATH`. The single `repo-web-view` call produces the whole tree — copied files, the `index.html` pages, and the `.htaccess` — and the two renames swap it in near-atomically. (For a single build with no swap, run it straight at `"$BASE_DIR/html" --force`, which clears and rebuilds in place.)
 
 Every page's footer then ends with the deployed commit, linked to it on GitHub, which is what makes "is the live site up to date?" answerable from the site itself:
@@ -115,6 +135,7 @@ Every page's footer then ends with the deployed commit, linked to it on GitHub, 
 
 - **`.html` files render; every other file downloads.** The tools here are self-contained single HTML files, so exposing them to *run* in the browser is the whole point. If you have an HTML file you'd rather force to download, drop an `.htaccess` in its folder setting `Content-Disposition "attachment"` for that name. Note that a `.html` tool which pulls in *sibling* assets (a separate `.js`/`.css`) would have those download — but the repo convention is that web tools are single self-contained files, so this doesn't arise here.
 - **Nothing is executed server-side.** The `.htaccess` disables handlers (PHP-FPM, CGI, …) and serves scripts statically, so a `.php`/`.cgi`/… in the tree downloads as source instead of running. Caveat: if your PHP is wired with `SetHandler "proxy:…"` inside a `<FilesMatch>` in the vhost (some PHP-FPM setups), that can out-rank `.htaccess`; to be certain, also turn execution off for this `DocumentRoot` in the vhost.
+- **`--render-markdown` matches `.md` only** (case-insensitively), not `.markdown`/`.mdown`/`.txt`. A source file that is *already* called `NAME.md.html` next to a `NAME.md` would be overwritten by the generated page — rename one of the two.
 - **README images** are inlined only when they point at a **local file that exists**; remote (`http(s)`) and absolute (`/…`) image URLs are left untouched.
 - **No per-file commit info.** GitHub shows each file's last commit message and date; this shows name, type and size. Adding the commit columns would mean a `git log` per path — deliberately left out to keep the tool VCS-agnostic and fast. For the same reason the tool never runs `git` itself: `--footer-note` takes whatever string the caller worked out, so the site can carry one build-wide version stamp without the generator knowing what a commit is.
 - **Syntax-highlight colours are tuned for light mode.** Pages otherwise adapt to the viewer's light/dark theme via `prefers-color-scheme`.
