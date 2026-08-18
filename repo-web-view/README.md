@@ -4,14 +4,16 @@ Publish a directory tree (a repo, a folder of docs) as a **static, GitHub-style 
 For every folder it generates an `index.html` that shows the folder's **rendered `README.md`** at the top, and **below it a listing** of that folder's contents.
 Folders open as more rendered pages, and the repo's self-contained **`.html` tools open and run in the browser**; **every other file downloads** rather than displaying.
 With `--render-markdown`, every `.md` file in the tree gets a rendered page too, so clicking one reads it instead of downloading it.
+Every page carries a **search box** over the whole site — the rendered pages by heading section, and every file in the tree by name.
 
-It is built to sit behind plain **Apache + PHP-FPM** — the same "I have an SSH login and `/var/www`" box that [github-push-deploy](../github-push-deploy/) targets — and pairs with that tool as the *publish* step: a push regenerates the browsable site.
+It is built to sit behind a plain **Apache** — the same "I have an SSH login and `/var/www`" box that [github-push-deploy](../github-push-deploy/) targets — and pairs with that tool as the *publish* step: a push regenerates the browsable site.
 
 ## What it produces
 
 - One `index.html` per folder: breadcrumb → rendered `README.md` (if the folder has one) → a table listing the folder's entries (directories first, then files with sizes).
 - Fully **self-contained pages**: the CSS is inlined and any local images referenced by a README are embedded as `data:` URIs. Nothing the pages need is a separate file that could get caught by the download rule.
 - With `--render-markdown`, one **`NAME.md.html`** beside every `NAME.md`: the same page layout with that file rendered where the README would be, and the folder's listing underneath. The listing links to it, and so do `.md` links inside rendered markdown.
+- A single **`search-index.js`** at the root, which every page loads the first time someone searches. See [Search](#search).
 - A single **`.htaccess`** at the root that (1) forces `Content-Disposition: attachment` on every file *except* `.html` — the generated index pages and the self-contained HTML tools, which render — and (2) disables server-side handlers (PHP-FPM, CGI, …) so a `.php`/`.cgi`/… in the tree downloads as source instead of executing. The whole download-vs-render policy lives in one place.
 
 Markdown is rendered with CommonMark + GitHub niceties: tables, strikethrough, task lists, autolinks, fenced code with **syntax highlighting** (Pygments), and GitHub-compatible heading anchors so in-page `#links` work.
@@ -58,6 +60,42 @@ uv run repo-web-view.py . ../tools-site --render-markdown
 
 `README.md` gets a page of its own too, even though its content is already at the top of the folder's `index.html`; that is what makes a link to `../other-tool/README.md` render.
 
+## Search
+
+Every generated page has a search box at the right of the breadcrumb row.
+Click it, or press `/` or `Ctrl`/`Cmd`+`K`, and a panel opens over the page; `↑`/`↓` walk the results, `Enter` opens one, `Esc` closes.
+
+Results come in two groups:
+
+- **Pages** — one entry per *heading section* of every page the site renders, so a result links to the heading it matched (`repo-web-view/#options`) rather than to the top of the page.
+  That means every folder's `README.md`, and — with `--render-markdown` — every other `.md` file as well.
+  Sections of the same page collapse into a single result — its best-matching section, with the others behind a *N more on this page* link that expands in place — so one long page cannot crowd out everything else.
+- **Files** — the name and path of every file and folder in the tree, so `deploy.sh` is findable without knowing which tool it belongs to.
+  Folders open, a `.md` file opens its rendered page when it has one, and anything else downloads, exactly as it would from a listing.
+
+The bar above the results counts every match; the list itself shows the 20 best pages and the 20 best files.
+
+Matching is plain substring matching, and every word of the query has to appear somewhere in the entry.
+A word matched at the start of a word beats one matched in the middle of one, a hit in a heading beats a hit in body text, and a hit in a file's name beats one elsewhere in its path.
+
+### The index
+
+The whole site shares one **`search-index.js`**, written at the root beside the `.htaccess`.
+A page pulls it in the first time someone actually searches, so a visitor who never opens the box never downloads it.
+It is loaded as a script rather than fetched as JSON, which keeps it working when the built site is opened straight off disk — `fetch()` of a sibling file is blocked there, a `<script>` tag is not.
+The force-download `.htaccess` does not get in the way either: `Content-Disposition` applies to what the browser *navigates* to, not to a subresource a page pulls in.
+
+The index holds the full text of every section, so its size tracks the amount of markdown you publish — for this repository, about 115 KB, or 40 KB over the wire once compressed.
+It is worth making sure Apache compresses it:
+
+```apache
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript
+</IfModule>
+```
+
+`--no-search` leaves out the box, the panel and the index file.
+
 ## Options
 
 | Flag | Default | Meaning |
@@ -68,6 +106,7 @@ uv run repo-web-view.py . ../tools-site --render-markdown
 | `--footer-note TEXT` | — | Text appended to every page's footer, e.g. the commit a deploy built. Escaped, so it is text and nothing else; empty means no note. |
 | `--footer-note-url URL` | — | Turn `--footer-note` into a link to this URL (ignored without a note). |
 | `--render-markdown` | off | Give every `.md` file a rendered page (`NAME.md.html`) and link to it from the listing, instead of downloading it. |
+| `--no-search` | off | Leave out the search box and the `search-index.js` it loads. |
 | `--no-htaccess` | off | Don't write the force-download `.htaccess` (e.g. you configure the rule in the vhost). |
 | `--serve [PORT]` | — | After building, serve `OUTPUT` with production-like download headers (default port `8000`). Put it last on the command line. |
 
@@ -138,4 +177,7 @@ Every page's footer then ends with the deployed commit, linked to it on GitHub, 
 - **`--render-markdown` matches `.md` only** (case-insensitively), not `.markdown`/`.mdown`/`.txt`. A source file that is *already* called `NAME.md.html` next to a `NAME.md` would be overwritten by the generated page — rename one of the two.
 - **README images** are inlined only when they point at a **local file that exists**; remote (`http(s)`) and absolute (`/…`) image URLs are left untouched.
 - **No per-file commit info.** GitHub shows each file's last commit message and date; this shows name, type and size. Adding the commit columns would mean a `git log` per path — deliberately left out to keep the tool VCS-agnostic and fast. For the same reason the tool never runs `git` itself: `--footer-note` takes whatever string the caller worked out, so the site can carry one build-wide version stamp without the generator knowing what a commit is.
+- **Search covers what the site renders, not what it publishes.** The `.py`, `.sh` and `.html` files in the tree are findable by *name*, but their contents are not indexed — only markdown that has a page to link to is. Without `--render-markdown` that is READMEs alone; a plain `.md` is a download, and a search result has nowhere to send you.
+- **A result shows the first 200 characters of the section it matched**, while the whole section is searched. A match further down is a real hit, but the snippet may not be showing the part that matched, so a result can appear with nothing highlighted in it.
+- **Folder links need a server.** Results that point at a folder (and the folder links in every listing) end in `/`, which only resolves to `index.html` through a web server. Search itself works when the site is opened off disk; those particular links do not.
 - **Syntax-highlight colours are tuned for light mode.** Pages otherwise adapt to the viewer's light/dark theme via `prefers-color-scheme`.

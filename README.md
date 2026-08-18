@@ -17,7 +17,7 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 ## Deployment
 
 - **[github-push-deploy](github-push-deploy/)** — auto-deploy a GitHub repo on every push, using a repo webhook and a small PHP listener on a plain Apache + PHP-FPM box. The listener verifies the webhook's HMAC-SHA256 signature, then clones the repo and runs your own deploy script — publish files, run a build, restart a service, launch a container, whatever you put in it. No CI runner or third-party service; one `deploy.conf` drives it all.
-- **[repo-web-view](repo-web-view/)** — publish a directory tree as a static, GitHub-style browsable site: every folder becomes an `index.html` showing its rendered `README.md` above a listing of the folder's contents, and a generated `.htaccess` makes Apache download files on click while folders render. Self-contained pages (inlined CSS, embedded README images), and `--render-markdown` gives every `.md` file a rendered page of its own instead of a download. Pairs with **github-push-deploy** as the publish step.
+- **[repo-web-view](repo-web-view/)** — publish a directory tree as a static, GitHub-style browsable site: every folder becomes an `index.html` showing its rendered `README.md` above a listing of the folder's contents, and a generated `.htaccess` makes Apache download files on click while folders render. Self-contained pages (inlined CSS, embedded README images), and `--render-markdown` gives every `.md` file a rendered page of its own instead of a download. Every page gets a search box (`/` or `Ctrl`-`K`) that searches the rendered pages by heading section and the whole tree by filename, off one shared index loaded on first use. Pairs with **github-push-deploy** as the publish step.
 
 ## Analytics
 
