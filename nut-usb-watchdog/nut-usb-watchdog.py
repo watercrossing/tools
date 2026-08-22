@@ -40,7 +40,7 @@ def read_sysfs(directory, name):
 def find_usb_device(vid, pid):
     """Path of the /dev/bus/usb node for the first device matching vid:pid, or None if it is not on the bus at all.
 
-    Resolved fresh on every run and never configured: bus and device numbers move across reboots, and a reset bumps the device number again."""
+    Resolved fresh on every run and never configured: bus and device numbers move across reboots, and a reset can renumber the device too."""
     for entry in sorted(os.listdir(SYSFS_USB)):
         d = os.path.join(SYSFS_USB, entry)
         try:

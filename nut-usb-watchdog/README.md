@@ -37,7 +37,7 @@ The driver flags usually suggested for a CyberPower that stops answering (`pollo
 2. If the UPS answers, exits 0 and prints nothing.
 3. Otherwise confirms it (`--retries`, default two more checks five seconds apart) so a momentarily busy `upsd` does not trigger a reset.
 4. Finds the device by vendor:product in `/sys`, stops the driver unit, resets the device, and starts the unit again.
-   Bus and device numbers are resolved fresh every run and never configured, because they move across reboots and a reset bumps the device number again.
+   Bus and device numbers are resolved fresh every run and never configured, because they move across reboots and a reset can renumber the device too.
 5. Waits up to `--startup-timeout` for the driver to report — it needs a few seconds to walk the report descriptor — then re-checks.
 
 Exit status is 0 when the UPS is talking (whether or not a reset was needed), 1 when it is not, and 2 on a usage error.
