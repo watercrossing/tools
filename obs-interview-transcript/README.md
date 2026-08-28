@@ -53,6 +53,7 @@ A text-similarity backstop then drops any kept mic segment that overlaps a deskt
   The first run downloads a lot (torch, cuDNN, cuBLAS, the Whisper weights); afterwards it is cached.
 - **An NVIDIA GPU** is optional but strongly wanted for transcription: `large-v3` on a (fairly ancient) GTX 1070 does 30 minutes of audio in about 8 minutes, where CPU takes hours.
   Without one, pass `--device cpu` and use a smaller `--model`.
+  Apple Silicon has no GPU option for transcription — ctranslate2 builds for CPU and CUDA only, with no Metal backend — but it is respectable on CPU: an M4 does `large-v3`/`int8` at roughly **1.7–1.9x realtime**, so transcribing both tracks takes a little over the recording's own duration. Diarization *can* use the GPU there; see below.
 - **A Hugging Face account and token**, for diarization only — see below.
   Skip it entirely with `--no-diarize`.
 
@@ -142,8 +143,27 @@ Everything is cached by then, so this completes in about a second and can be rep
 The pyannote speaker-embedding pass is the most expensive part of the pipeline: roughly **15 minutes for 30 minutes of audio** on a 16-core CPU, against about 8 minutes for `large-v3` transcription on a GPU.
 It prints nothing while it works.
 
-`--diarize-device cuda` would cut that to a minute or two, but torch installs here as the CPU build from PyPI.
-Using the GPU means installing a CUDA torch from PyTorch's own index, so it is not the default.
+`--diarize-device` defaults to `auto`, which takes CUDA if it is there, else Metal on Apple Silicon, else CPU.
+
+On **Apple Silicon that is a real win and costs nothing**: unlike ctranslate2, torch ships its Metal backend in the ordinary PyPI wheel, so `mps` is available with no special index. Measured on an M4, diarization runs at about **6.8x realtime** (three minutes of audio in 27 seconds) even with Whisper saturating the CPU alongside it — so it stops being the bottleneck entirely.
+
+On **CUDA** it would also cut the time to a minute or two, but torch installs here as the CPU build from PyPI, so `auto` will not find a GPU unless you install a CUDA torch from PyTorch's own index.
+
+Any accelerator failure — an op with no Metal kernel, GPU OOM — is caught and the pass is retried on CPU, so `auto` cannot make the run fail outright.
+
+## macOS notes
+
+Two things bite on macOS, both fixed in the script:
+
+**pyannote cannot decode audio here.** pyannote 4.x reads audio through `torchcodec`, whose bundled `libtorchcodec_core*.dylib` are built with **no `LC_RPATH`**, so they cannot locate a Homebrew FFmpeg's `libavutil` however it is installed — the version-matching advice in its error message is a red herring, since dlopen fails before version ever comes into it. Every candidate fails and you get:
+
+```
+RuntimeError: Could not load libtorchcodec. Likely causes: ...
+```
+
+The fix is to stop asking it to decode: the script hands pyannote `{"waveform": tensor, "sample_rate": 16000}`, decoded with the ffmpeg it already shells out to. That is a documented `AudioFile`, honoured by pyannote's duration, whole-file and crop paths alike, so nothing is given up — and it saves writing a WAV of the whole interview to a temporary file.
+
+**The CUDA wheels have no macOS build.** `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` are marked `sys_platform != 'darwin'` in the inline metadata; without that, `uv` refuses to resolve at all (`no wheels with a matching platform tag`) before a line of the script runs.
 
 ## Windows notes
 

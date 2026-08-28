@@ -7,8 +7,8 @@
 #     "pyannote.audio>=4",
 #     "torch",
 #     "torchaudio",
-#     "nvidia-cublas-cu12",
-#     "nvidia-cudnn-cu12==9.*",
+#     "nvidia-cublas-cu12; sys_platform != 'darwin'",
+#     "nvidia-cudnn-cu12==9.*; sys_platform != 'darwin'",
 # ]
 # ///
 """
@@ -38,8 +38,10 @@ Stages (all run by default; each caches into OUTDIR/.cache so you can re-run or 
 
 Use headphones and the gate becomes trivial (no bleed at all); it is built for the speakers case.
 """
-import argparse, difflib, json, os, subprocess, sys, shutil, tempfile
+import argparse, difflib, json, os, subprocess, sys, shutil
 from pathlib import Path
+
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")     # let unimplemented Metal ops run on cpu
 
 import numpy as np
 
@@ -115,14 +117,24 @@ def enable_cuda_dlls():
 
 
 def load_whisper(model_size, device, compute_type):
+    """ctranslate2 builds for CPU and CUDA only - there is no Metal backend, so on Apple Silicon the
+    answer is always cpu and probing for cuda would only raise. Ask ctranslate2 what it has rather
+    than finding out by exception, but keep the exception path: a machine can report a CUDA device
+    and still fail to load one (driver mismatch, or the DLLs enable_cuda_dlls() exists to find)."""
     from faster_whisper import WhisperModel
     if device != "auto":
         return WhisperModel(model_size, device=device, compute_type=compute_type), device
     try:
-        return WhisperModel(model_size, device="cuda", compute_type=compute_type), "cuda"
-    except Exception as e:                                     # no CUDA, wrong driver, DLLs missing
-        print(f"  cuda unavailable ({str(e).splitlines()[0][:90]}), falling back to cpu")
-        return WhisperModel(model_size, device="cpu", compute_type="int8"), "cpu"
+        import ctranslate2
+        has_cuda = ctranslate2.get_cuda_device_count() > 0
+    except Exception:
+        has_cuda = False
+    if has_cuda:
+        try:
+            return WhisperModel(model_size, device="cuda", compute_type=compute_type), "cuda"
+        except Exception as e:                                 # wrong driver, DLLs missing
+            print(f"  cuda unavailable ({str(e).splitlines()[0][:90]}), falling back to cpu")
+    return WhisperModel(model_size, device="cpu", compute_type="int8"), "cpu"
 
 
 def transcribe(model, path, label, words, language):
@@ -162,6 +174,20 @@ def stage_transcribe(paths, cache, args):
 
 
 # ------------------------------------------------------------------ diarization
+def torch_device(pref):
+    """Pick the accelerator pyannote should run on. Unlike ctranslate2, torch ships a Metal backend
+    in the ordinary PyPI wheel, so on Apple Silicon 'mps' is available with no special index - which
+    matters, because the speaker-embedding pass is by far the slowest thing here on cpu."""
+    import torch
+    if pref != "auto":
+        return pref
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def stage_diarize(desktop_audio, cache, args):
     out = cache / "diarization.json"
     if out.exists() and not args.rediarize:
@@ -178,16 +204,27 @@ def stage_diarize(desktop_audio, cache, args):
                  f"then store a read token:  uv tool install huggingface_hub && hf auth login")
     if pipeline is None:
         sys.exit(f"pyannote returned no pipeline for {args.diarization_model} - the licence is probably not accepted.")
-    pipeline.to(torch.device(args.diarize_device))
+    device = torch_device(args.diarize_device)
+    pipeline.to(torch.device(device))
 
-    with tempfile.TemporaryDirectory() as td:                  # pyannote wants a waveform, not aac
-        wav = Path(td) / "audio.wav"
-        subprocess.run([args.ffmpeg, "-v", "error", "-y", "-i", str(desktop_audio), "-ac", "1", "-ar", str(SR), str(wav)],
-                       check=True)
-        print(f"diarize: pyannote on {args.diarize_device} (the embedding pass is slow on cpu - minutes, not seconds)",
-              flush=True)
-        kw = {k: v for k in ("num_speakers", "min_speakers", "max_speakers") if (v := getattr(args, k)) is not None}
-        result = pipeline(str(wav), **kw)
+    # Hand pyannote the samples rather than a path. pyannote 4.x decodes through torchcodec, whose
+    # bundled dylibs carry no LC_RPATH and so cannot find a Homebrew FFmpeg at all - on macOS that
+    # is a hard failure ("Could not load libtorchcodec") no matter which FFmpeg is installed. We
+    # already have ffmpeg, and the in-memory form is a documented AudioFile, honoured by the
+    # duration, whole-file and crop paths alike. It also saves writing a WAV of the whole interview.
+    audio = {"waveform": torch.from_numpy(decode_mono(args.ffmpeg, desktop_audio)).unsqueeze(0),
+             "sample_rate": SR}
+    print(f"diarize: pyannote on {device}"
+          + (" (the embedding pass is slow on cpu - minutes, not seconds)" if device == "cpu" else ""), flush=True)
+    kw = {k: v for k in ("num_speakers", "min_speakers", "max_speakers") if (v := getattr(args, k)) is not None}
+    try:
+        result = pipeline(audio, **kw)
+    except Exception as e:                                     # an op with no Metal kernel, or GPU OOM
+        if device == "cpu":
+            raise
+        print(f"  {device} failed ({str(e).splitlines()[0][:90]}), retrying on cpu", flush=True)
+        pipeline.to(torch.device("cpu"))
+        result = pipeline(audio, **kw)
 
     ann = getattr(result, "speaker_diarization", result)       # 4.x wraps the annotation in a result object
     turns = [{"start": t.start, "end": t.end, "speaker": s} for t, _, s in ann.itertracks(yield_label=True)]
@@ -336,7 +373,8 @@ def main():
     ap.add_argument("--threshold", type=float, default=10.0, help="dB the mic must exceed the desktop track by to count as you")
     ap.add_argument("--no-diarize", action="store_true", help="skip pyannote; the far end becomes a single OTHER")
     ap.add_argument("--diarization-model", default="pyannote/speaker-diarization-community-1", help="gated pyannote pipeline")
-    ap.add_argument("--diarize-device", default="cpu", choices=("cpu", "cuda"), help="pyannote device (cuda needs a CUDA torch build)")
+    ap.add_argument("--diarize-device", default="auto", choices=("auto", "cpu", "cuda", "mps"),
+                    help="pyannote device; auto picks cuda, else mps on Apple Silicon, else cpu")
     ap.add_argument("--num-speakers", type=int, help="exact number of far-end speakers, if known")
     ap.add_argument("--min-speakers", type=int)
     ap.add_argument("--max-speakers", type=int)
