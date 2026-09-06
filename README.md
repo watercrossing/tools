@@ -39,6 +39,10 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 
 - **[markdown-docs-lint](markdown-docs-lint/)** — lint a Markdown docs tree for the failures that break silently: dead relative links, dead `#anchors`, pages nothing links to, and files grown too long to read whole. Anchors are the point: rename a heading and every inbound `#fragment` dies with no error, no visual change, and a one-line `git diff` that does not include the files that broke. Handles the traps a hand-rolled checker gets wrong — GitHub's slug leaves *two* hyphens where an em dash sat between spaces, code fences are not headings, and backticked text still counts toward a slug. Exits non-zero, so it works as a pre-commit hook.
 
+## Travel
+
+- **[thameslink-engineering-work](thameslink-engineering-work/)** — turn [Thameslink's planned engineering work page](https://www.thameslinkrailway.com/service-updates/planned-engineering-work) into a single `.ics` calendar. The page only shows one day at a time with no overview, so this fetches N consecutive days, de-duplicates the multi-day closures by the stable `INCxxxxxxxx` id already in the server-rendered HTML, and writes one all-day event per item, ready to import into Google Calendar. `--filter` narrows it to routes you actually care about.
+
 ## Claude Code
 
 - **[claude-render-transcripts](claude-render-transcripts/)** — render a Claude Code session `.jsonl` transcript (including headless `claude -p` runs that never appear in the `/resume` picker) into readable plain text: one header per turn and `text` / `thinking` / `tool_use` / `tool_result` blocks flattened, with long tool inputs and results truncated.
