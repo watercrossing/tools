@@ -159,6 +159,8 @@ mv "$BASE_DIR/html-new" "$BASE_DIR/html"
 rm -rf "$BASE_DIR/html-old"
 ```
 
+### Running it straight from GitHub (no checkout needed)
+
 That assumes `repo-web-view/repo-web-view.py` is already checked out next to the deploying repo.
 When the deploy user is isolated and can't reach a local checkout of this repo — no shared home directory, no submodule, nothing vendored — `uv run --script` can fetch the file straight from GitHub instead, no clone needed:
 
