@@ -159,6 +159,17 @@ mv "$BASE_DIR/html-new" "$BASE_DIR/html"
 rm -rf "$BASE_DIR/html-old"
 ```
 
+That assumes `repo-web-view/repo-web-view.py` is already checked out next to the deploying repo.
+When the deploy user is isolated and can't reach a local checkout of this repo — no shared home directory, no submodule, nothing vendored — `uv run --script` can fetch the file straight from GitHub instead, no clone needed:
+
+```bash
+uv run --script https://raw.githubusercontent.com/watercrossing/tools/main/repo-web-view/repo-web-view.py \
+  . "$BASE_DIR/html-new" --footer-note "$SHORT_SHA" --footer-note-url "$COMMIT_URL"
+```
+
+Use the **`raw.githubusercontent.com`** URL, not a `github.com/.../blob/...` link — the latter serves an HTML page, not the script's source, so `uv run` can't parse its PEP 723 header.
+Pointing at `main` is deliberate rather than a loose end to pin down: this repo publishes from `main` and nothing else, so `main` *is* the released version, the same way `tools.ibecker.eu` (this repo, served over HTTP) always tracks it too.
+
 Add `--render-markdown` to that call if you want every `.md` in the repo readable in the browser rather than downloadable.
 The deploy user needs `uv` on its `PATH`. The single `repo-web-view` call produces the whole tree — copied files, the `index.html` pages, and the `.htaccess` — and the two renames swap it in near-atomically. (For a single build with no swap, run it straight at `"$BASE_DIR/html" --force`, which clears and rebuilds in place.)
 
