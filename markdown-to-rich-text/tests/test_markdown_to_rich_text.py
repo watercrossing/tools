@@ -124,6 +124,11 @@ def test_paste_edits_normally_when_auto_copy_is_off(page):
     assert page.inner_html("#preview").strip() == '<p style="font-size: 11pt;">start <strong>more</strong></p>'
 
 
+def test_single_newlines_are_line_breaks(page):
+    html = copied(page, "**Traveller:** me\n**Purpose:** a workshop\n")["html"]
+    assert "<strong>Traveller:</strong> me<br><strong>Purpose:</strong> a workshop" in html
+
+
 def test_text_size_applies_to_body_text_but_not_headings(page):
     html = copied(page, "# Head\n\nbody\n\n- item\n")["html"]
     assert "<h1>Head</h1>" in html

@@ -146,7 +146,8 @@ const STYLES = {
 // Markdown -> an HTML fragment that pastes well into Outlook and Word.
 function toRichHtml(text) {
   const tpl = document.createElement("template");
-  tpl.innerHTML = DOMPurify.sanitize(marked.parse(text, { gfm: true }));
+  // breaks: a single newline is a line break, as Claude and GitHub comments render it, rather than joining the lines.
+  tpl.innerHTML = DOMPurify.sanitize(marked.parse(text, { gfm: true, breaks: true }));
   const root = tpl.content;
   // Task-list checkboxes become glyphs: form controls don't survive the paste.
   for (const box of root.querySelectorAll("input[type=checkbox]")) box.replaceWith(box.checked ? "☑" : "☐");
