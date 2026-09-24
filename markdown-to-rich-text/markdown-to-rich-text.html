@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markdown to rich text</title>
+<style>
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 16px;
+  font-family: Helvetica, Arial, sans-serif;
+  color: #222;
+  background: #fafafa;
+}
+h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+.intro {
+  margin: 0 0 12px;
+  color: #555;
+}
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+button {
+  font: inherit;
+  font-size: 16px;
+  padding: 8px 16px;
+  border: 1px solid #2463c7;
+  border-radius: 6px;
+  background: #2f74e0;
+  color: #fff;
+  cursor: pointer;
+}
+button:hover {
+  background: #2463c7;
+}
+#status {
+  color: #1b7a32;
+  min-height: 1.2em;
+}
+#status.error {
+  color: #b3261e;
+}
+.panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 800px) {
+  .panes {
+    grid-template-columns: 1fr;
+  }
+}
+.pane label {
+  display: block;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+textarea, #preview {
+  width: 100%;
+  height: 70vh;
+  min-height: 240px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+}
+textarea {
+  padding: 10px;
+  font-family: Consolas, Menlo, monospace;
+  font-size: 16px;
+  resize: vertical;
+}
+#preview {
+  padding: 4px 16px;
+  overflow: auto;
+  line-height: 1.4;
+}
+#preview:empty::before {
+  content: "The formatted version appears here.";
+  display: block;
+  margin-top: 12px;
+  color: #999;
+}
+</style>
+</head>
+<body>
+<h1>Markdown to rich text</h1>
+<p class="intro">Paste Markdown, such as a reply copied from Claude, and copy it back out as formatted text that keeps headings, lists, tables and code when pasted into Outlook or Word.</p>
+
+<div class="bar">
+  <button id="copy" type="button">Copy formatted text</button>
+  <label><input id="auto" type="checkbox" checked> Pasting replaces the text and copies the result straight away</label>
+  <label>Text size
+    <select id="size">
+      <option value="">destination's default</option>
+      <option>10</option>
+      <option selected>11</option>
+      <option>12</option>
+    </select> pt
+  </label>
+  <span id="status" role="status" aria-live="polite"></span>
+</div>
+
+<div class="panes">
+  <div class="pane">
+    <label for="md">Markdown</label>
+    <textarea id="md" spellcheck="false" autofocus placeholder="Paste Markdown here (Ctrl+V)…"></textarea>
+  </div>
+  <div class="pane">
+    <label>Preview</label>
+    <div id="preview"></div>
+  </div>
+</div>
+
+<script type="module">
+import { marked } from "https://cdn.jsdelivr.net/npm/marked@18/lib/marked.esm.js";
+import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.es.mjs";
+
+const md = document.getElementById("md");
+const preview = document.getElementById("preview");
+const auto = document.getElementById("auto");
+const size = document.getElementById("size");
+const status = document.getElementById("status");
+
+// Inline styles, because Outlook and Word ignore stylesheets on paste. Headings, paragraphs and lists get none on purpose,
+// so they pick up the destination's own Heading 1–6 and Normal styles (in Outlook that needs "Keep source formatting").
+const MONO = "font-family: Consolas, 'Courier New', monospace; font-size: 90%;";
+const STYLES = {
+  "code": `${MONO} background: #f2f2f2; padding: 0 3px;`,
+  "pre": `${MONO} background: #f2f2f2; padding: 8px 10px; white-space: pre-wrap;`,
+  "table": "border-collapse: collapse;",
+  "th": "border: 1px solid #bbb; padding: 4px 8px; background: #f2f2f2;",
+  "td": "border: 1px solid #bbb; padding: 4px 8px;",
+  "blockquote": "margin: 0 0 0 4px; padding-left: 10px; border-left: 3px solid #ccc; color: #555;",
+};
+
+// Markdown -> an HTML fragment that pastes well into Outlook and Word.
+function toRichHtml(text) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = DOMPurify.sanitize(marked.parse(text, { gfm: true }));
+  const root = tpl.content;
+  // Task-list checkboxes become glyphs: form controls don't survive the paste.
+  for (const box of root.querySelectorAll("input[type=checkbox]")) box.replaceWith(box.checked ? "☑" : "☐");
+  // Relative links (Claude's links to files in the repo) mean nothing in an email, so keep only their text.
+  for (const a of root.querySelectorAll("a")) {
+    if (!/^(https?:|mailto:)/i.test(a.getAttribute("href") || "")) a.replaceWith(...a.childNodes);
+  }
+  // Same for relative images: the recipient's mail client has nothing to load them from.
+  for (const img of root.querySelectorAll("img")) if (!/^(https?:|data:)/i.test(img.getAttribute("src") || "")) img.remove();
+  for (const [sel, style] of Object.entries(STYLES)) {
+    for (const el of root.querySelectorAll(sel)) if (!el.closest("pre") || sel === "pre") el.setAttribute("style", style);
+  }
+  // Unsized body text pastes at the HTML default of 12pt rather than the destination's own size. Headings stay unsized.
+  if (size.value) for (const el of root.querySelectorAll("p, li, th, td")) el.style.fontSize = `${size.value}pt`;
+  const div = document.createElement("div");
+  div.append(root);
+  return div.innerHTML;
+}
+
+function render() {
+  const html = toRichHtml(md.value);
+  preview.innerHTML = html;
+  return html;
+}
+
+function say(msg, error = false) {
+  status.textContent = msg;
+  status.classList.toggle("error", error);
+}
+
+// The HTML version is what Outlook and Word use; the Markdown goes along as plain text for anything that can't take HTML.
+async function copy() {
+  const html = render(), text = md.value;
+  if (!text.trim()) return say("Nothing to copy yet — paste some Markdown first.", true);
+  try {
+    await navigator.clipboard.write([new ClipboardItem({
+      "text/html": new Blob([html], { type: "text/html" }),
+      "text/plain": new Blob([text], { type: "text/plain" }),
+    })]);
+  } catch {
+    // Older browsers: fill the clipboard from a copy event instead.
+    const onCopy = e => {
+      e.clipboardData.setData("text/html", html);
+      e.clipboardData.setData("text/plain", text);
+      e.preventDefault();
+    };
+    document.addEventListener("copy", onCopy, { once: true });
+    const ok = document.execCommand("copy");
+    document.removeEventListener("copy", onCopy);
+    if (!ok) return say("Couldn't write to the clipboard — select the preview and press Ctrl+C instead.", true);
+  }
+  say("Copied ✓ — paste into Outlook or Word.");
+}
+
+// With auto-copy on, a paste anywhere on the page replaces the Markdown and copies the result straight away.
+document.addEventListener("paste", e => {
+  if (!auto.checked) return;
+  const text = e.clipboardData.getData("text/plain");
+  if (!text) return;
+  e.preventDefault();
+  md.value = text;
+  copy();
+});
+
+md.addEventListener("input", () => { render(); say(""); });
+document.getElementById("copy").addEventListener("click", copy);
+
+try {
+  auto.checked = localStorage.getItem("md2rich-auto") !== "off";
+  size.value = localStorage.getItem("md2rich-size") ?? size.value;
+} catch {}
+auto.addEventListener("change", () => {
+  try {
+    localStorage.setItem("md2rich-auto", auto.checked ? "on" : "off");
+  } catch {}
+});
+size.addEventListener("change", () => {
+  render();
+  say("");
+  try {
+    localStorage.setItem("md2rich-size", size.value);
+  } catch {}
+});
+
+render();
+</script>
+</body>
+</html>

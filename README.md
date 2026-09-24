@@ -47,6 +47,7 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 ## Claude Code
 
 - **[claude-render-transcripts](claude-render-transcripts/)** — render a Claude Code session `.jsonl` transcript (including headless `claude -p` runs that never appear in the `/resume` picker) into readable plain text: one header per turn and `text` / `thinking` / `tool_use` / `tool_result` blocks flattened, with long tool inputs and results truncated.
+- **[markdown-to-rich-text](markdown-to-rich-text/)** — paste Markdown (such as a reply copied out of a Claude chat) and copy it back out as formatted text that pastes into Outlook or Word with real Heading 1–6 styles, lists, bordered tables and monospaced code, instead of literal `**asterisks**`. Paste into the page and the formatted version is already on the clipboard; relative repo links and images, meaningless in an email, are reduced to their text.
 
 ## Web capture
 
