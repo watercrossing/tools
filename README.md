@@ -47,6 +47,10 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 
 - **[claude-render-transcripts](claude-render-transcripts/)** — render a Claude Code session `.jsonl` transcript (including headless `claude -p` runs that never appear in the `/resume` picker) into readable plain text: one header per turn and `text` / `thinking` / `tool_use` / `tool_result` blocks flattened, with long tool inputs and results truncated.
 
+## Web capture
+
+- **[copy-page-html](copy-page-html/)** — a userscript that copies the HTML of one picked page element to the clipboard, no devtools needed: hover to highlight, click to copy, done. The CSS selector is cached per site, so a repeat visit is a single menu click. Built for pages that resist automated scraping (e.g. Drupal behind Cloudflare), where grabbing one landmark element by hand is otherwise a "inspect element → find the node → copy outer HTML" chore.
+
 ## Overleaf
 
 - **[overleaf-comments-export](overleaf-comments-export/)** — a Tampermonkey userscript that syncs Overleaf review comments into the LaTeX source as `\olc` macros (author, timestamp, highlighted span, comment), each on its own line just above the line it annotates, so they land in git. Idempotent via a per-line `%olcsync` marker (insert new, update changed, never duplicate); resolved threads skipped by default; one macro per reply. Writing is a real edit that propagates to collaborators, so it confirms first.
