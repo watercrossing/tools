@@ -41,6 +41,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote
 
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
 from mdit_py_plugins.anchors import anchors_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
 from pygments import highlight as pyg_highlight
@@ -70,12 +71,61 @@ def _gh_slug(text):
     # Match GitHub's heading anchors: lowercase, drop punctuation, spaces -> hyphens.
     return re.sub(r"[^\w\- ]", "", text.strip().lower()).replace(" ", "-")
 
-def make_markdown():
+def make_markdown(link_prefixes=None):
     md = MarkdownIt("commonmark", {"html": True, "linkify": True, "highlight": _highlight})
     md.enable(["table", "strikethrough", "linkify"], True)
     md.use(tasklists_plugin)
     md.use(anchors_plugin, max_level=6, slug_func=_gh_slug)
+    if link_prefixes:
+        md.core.ruler.push("link_prefix", link_prefix_rule(link_prefixes))
     return md
+
+# --------------------------------------------------------------------- --link-prefix
+# A "KEY:PATH" reference — the way a repo might name a file in OneDrive, Zotero, another repo — becomes a link through a
+# URL template per KEY. {path} is PATH percent-encoded (slashes kept); {path~REGEX} is the first match of REGEX in PATH
+# (its first group, if it has one), for URLs that need a piece of the path, e.g. a folder named after its first letters.
+PLACEHOLDER_RE = re.compile(r"\{path(?:~((?:[^{}]|\{[^{}]*\})*))?\}")
+
+def parse_link_prefix(spec):
+    key, sep, template = spec.partition("=")
+    if not sep or not template or not re.fullmatch(r"[A-Za-z0-9][\w.+-]*", key):
+        raise ValueError(f"expected KEY=URL-TEMPLATE, got {spec!r}")
+    for m in PLACEHOLDER_RE.finditer(template):
+        if m.group(1) is not None:
+            re.compile(m.group(1))   # a bad regex fails here, not halfway through a build
+    return key, template
+
+def expand_link(prefixes, ref):
+    # The URL for "KEY:PATH", or None: KEY unmapped, PATH empty or still a <placeholder>, or a {path~REGEX} finds nothing.
+    key, sep, path = ref.strip().partition(":")
+    template = prefixes.get(key)
+    if not sep or template is None or not path or re.search(r"[<>\t\n]", path):
+        return None
+    pieces = [re.search(m.group(1), path) if m.group(1) is not None else path for m in PLACEHOLDER_RE.finditer(template)]
+    if None in pieces:
+        return None
+    pieces = iter(quote(p if isinstance(p, str) else p.group(1 if p.re.groups else 0)) for p in pieces)
+    return PLACEHOLDER_RE.sub(lambda _m: next(pieces), template)
+
+def link_prefix_rule(prefixes):
+    # Works on tokens rather than on HTML: a link's own href is rewritten, and an inline code span holding nothing but a
+    # reference is wrapped in a link — unless it already sits inside one. Fenced and indented code is left alone.
+    def rule(state):
+        for block in (t for t in state.tokens if t.type == "inline" and t.children):
+            out, depth = [], 0
+            for tok in block.children:
+                if tok.type == "link_open":
+                    depth += 1
+                    if url := expand_link(prefixes, unquote(tok.attrGet("href") or "")):
+                        tok.attrSet("href", url)
+                elif tok.type == "link_close":
+                    depth -= 1
+                elif tok.type == "code_inline" and not depth and (url := expand_link(prefixes, tok.content)):
+                    out += [Token("link_open", "a", 1, attrs={"href": url}), tok, Token("link_close", "a", -1)]
+                    continue
+                out.append(tok)
+            block.children = out
+    return rule
 
 def _img_mime(path):
     return mimetypes.guess_type(path.name)[0] or {
@@ -312,6 +362,9 @@ def main(argv=None):
                     help="make --footer-note a link to this URL, e.g. that commit on GitHub")
     ap.add_argument("--render-markdown", action="store_true",
                     help="give every .md file a rendered page (NAME.md.html) and link to it, instead of downloading it")
+    ap.add_argument("--link-prefix", action="append", default=[], metavar="KEY=URL-TEMPLATE",
+                    help="turn KEY:PATH references in markdown (inline code or link targets) into links to URL-TEMPLATE, "
+                         "where {path} is PATH and {path~REGEX} its first REGEX match (repeatable)")
     ap.add_argument("--no-search", action="store_true",
                     help="leave out the search box and the search index it loads")
     ap.add_argument("--no-htaccess", action="store_true", help="do not write the force-download .htaccess")
@@ -320,6 +373,10 @@ def main(argv=None):
                     help="after building, serve OUTPUT with production-like download headers (default port 8000)")
     args = ap.parse_args(argv)
 
+    try:
+        link_prefixes = dict(parse_link_prefix(spec) for spec in args.link_prefix)
+    except (ValueError, re.error) as e:
+        ap.error(f"--link-prefix: {e}")
     src, out = Path(args.source).resolve(), Path(args.output).resolve()
     if not src.is_dir():
         ap.error(f"source is not a directory: {src}")
@@ -331,7 +388,7 @@ def main(argv=None):
         shutil.rmtree(out)
 
     copy_tree(src, out, args.exclude)
-    n = generate(out, args.title or src.name or "root", make_markdown(),
+    n = generate(out, args.title or src.name or "root", make_markdown(link_prefixes),
                  footer_note_html(args.footer_note.strip(), args.footer_note_url.strip()), args.render_markdown,
                  not args.no_search)
     if not args.no_htaccess:

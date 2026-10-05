@@ -358,3 +358,54 @@ def test_search_index_escapes_nothing_into_html(sample_repo, tmp_path):
     evil = next(rec for rec in search_index(out)["pages"] if rec[0].startswith("evil.md.html"))
     assert "<script>" not in evil[3] and "<b>" not in evil[3]
     assert "alert(1)" in evil[3] and "bold" in evil[3]
+
+
+ZOT = "zot=https://od.example/Zotero/{path~\\w{1,2}}/{path}.pdf"
+
+
+def article_of(page):
+    return page.split('<article class="markdown-body">', 1)[1].split("</article>", 1)[0]
+
+
+def test_link_prefix_wraps_inline_code(sample_repo, tmp_path):
+    (sample_repo / "README.md").write_text("Read `zot:aimeur_privacy_2010`, `zot:d.molina_does_2021` and `od:a dir/b!.pdf`.\n",
+                                           encoding="utf-8")
+    out = tmp_path / "site"
+    assert build(sample_repo, out, "--link-prefix", ZOT, "--link-prefix", "od=https://od.example/Docs/{path}").returncode == 0
+    body = article_of((out / "index.html").read_text(encoding="utf-8"))
+    assert '<a href="https://od.example/Zotero/ai/aimeur_privacy_2010.pdf"><code>zot:aimeur_privacy_2010</code></a>' in body
+    assert 'href="https://od.example/Zotero/d/d.molina_does_2021.pdf"' in body     # the regex stops at the dot
+    assert 'href="https://od.example/Docs/a%20dir/b%21.pdf"' in body               # percent-encoded, slashes kept
+
+
+def test_link_prefix_rewrites_link_targets(sample_repo, tmp_path):
+    (sample_repo / "README.md").write_text("The [bid](<od:Grants/Large bid.docx>) and [elsewhere](https://e.com/od:x).\n",
+                                           encoding="utf-8")
+    out = tmp_path / "site"
+    build(sample_repo, out, "--link-prefix", "od=https://od.example/{path}")
+    body = article_of((out / "index.html").read_text(encoding="utf-8"))
+    assert '<a href="https://od.example/Grants/Large%20bid.docx">bid</a>' in body   # not double-encoded
+    assert 'href="https://e.com/od:x"' in body
+
+
+def test_link_prefix_leaves_non_references_alone(sample_repo, tmp_path):
+    (sample_repo / "README.md").write_text("A `zot:<citekey>`, a bare `zot:`, an `other:key`, a [`zot:in_link_2020`](https://e.com)."
+                                           "\n\n```\nzot:in_fence_2020\n```\n", encoding="utf-8")
+    out = tmp_path / "site"
+    build(sample_repo, out, "--link-prefix", ZOT)
+    body = article_of((out / "index.html").read_text(encoding="utf-8"))
+    assert "od.example" not in body
+    assert '<a href="https://e.com"><code>zot:in_link_2020</code></a>' in body     # no link nested in a link
+
+
+def test_link_prefix_off_by_default(sample_repo, tmp_path):
+    (sample_repo / "README.md").write_text("Read `zot:aimeur_privacy_2010`.\n", encoding="utf-8")
+    out = tmp_path / "site"
+    build(sample_repo, out)
+    assert "<a " not in article_of((out / "index.html").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("spec", ["no-equals", "=https://x/{path}", "k=", "k=https://x/{path~(}"])
+def test_link_prefix_rejects_bad_specs(sample_repo, tmp_path, spec):
+    result = build(sample_repo, tmp_path / "site", "--link-prefix", spec)
+    assert result.returncode != 0 and "--link-prefix" in result.stderr

@@ -96,6 +96,24 @@ It is worth making sure Apache compresses it:
 
 `--no-search` leaves out the box, the panel and the index file.
 
+## Linking `KEY:PATH` references
+
+Some repos name files that live elsewhere by a key and a relative path, e.g. `onedrive:Teaching/slides.pptx`, because the local root differs from host to host.
+`--link-prefix KEY=URL-TEMPLATE` makes those clickable on the site, by giving each key the web URL its paths hang off:
+
+```bash
+uv run repo-web-view.py . ../site \
+  --link-prefix 'onedrive=https://contoso-my.sharepoint.com/personal/me_contoso_com/Documents/{path}' \
+  --link-prefix 'zot=https://contoso-my.sharepoint.com/personal/me_contoso_com/Documents/Zotero/{path~\w{1,2}}/{path}.pdf'
+```
+
+- **What is rewritten:** an inline code span holding nothing but `KEY:PATH` (`` `onedrive:Teaching/slides.pptx` `` becomes a link around the code), and a link whose target is `KEY:PATH` (`[slides](<onedrive:Teaching/my slides.pptx>)`).
+  Fenced and indented code blocks, plain text, and code that already sits inside a link are left alone.
+- **Placeholders:** `{path}` is `PATH`, percent-encoded with its slashes kept.
+  `{path~REGEX}` is the first match of `REGEX` in `PATH` (its first group, if it has one), for URLs built from a piece of the path; above, Zotero files sit in folders named after the first one or two word characters of the file name, so `zot:d.molina_does_2021` links to `Zotero/d/d.molina_does_2021.pdf`.
+- **Not a reference:** an empty `PATH`, a `PATH` containing `<` or `>` (a `zot:<citekey>` placeholder in prose), an unmapped key, or a `{path~REGEX}` that matches nothing; these stay plain code.
+- Keys are case-sensitive and must start with a letter or digit; a malformed option or a bad regex fails before anything is built.
+
 ## Options
 
 | Flag | Default | Meaning |
@@ -106,6 +124,7 @@ It is worth making sure Apache compresses it:
 | `--footer-note TEXT` | — | Text appended to every page's footer, e.g. the commit a deploy built. Escaped, so it is text and nothing else; empty means no note. |
 | `--footer-note-url URL` | — | Turn `--footer-note` into a link to this URL (ignored without a note). |
 | `--render-markdown` | off | Give every `.md` file a rendered page (`NAME.md.html`) and link to it from the listing, instead of downloading it. |
+| `--link-prefix KEY=URL-TEMPLATE` | — | Turn `KEY:PATH` references in markdown into links; repeatable, one per key. See [Linking `KEY:PATH` references](#linking-keypath-references). |
 | `--no-search` | off | Leave out the search box and the `search-index.js` it loads. |
 | `--no-htaccess` | off | Don't write the force-download `.htaccess` (e.g. you configure the rule in the vhost). |
 | `--serve [PORT]` | — | After building, serve `OUTPUT` with production-like download headers (default port `8000`). Put it last on the command line. |
