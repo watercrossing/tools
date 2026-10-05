@@ -40,6 +40,10 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 
 - **[markdown-docs-lint](markdown-docs-lint/)** — lint a Markdown docs tree for the failures that break silently: dead relative links, dead `#anchors`, pages nothing links to, and files grown too long to read whole. Anchors are the point: rename a heading and every inbound `#fragment` dies with no error, no visual change, and a one-line `git diff` that does not include the files that broke. Handles the traps a hand-rolled checker gets wrong — GitHub's slug leaves *two* hyphens where an em dash sat between spaces, code fences are not headings, and backticked text still counts toward a slug. Exits non-zero, so it works as a pre-commit hook.
 
+## Research
+
+- **[zotero-index](zotero-index/)** — query a Zotero library offline from a Better BibTeX JSON auto-export synced from another machine: the attachment path for a citekey, the citekey for a DOI, a search by title/author/tag/collection/year, and a data-quality report. No Zotero install and no web API. A `[path_map]` rewrites the exporting host's (often Windows) attachment paths for the machine you're on, and a slim index is cached and rebuilt only when the export's mtime or size changes, so an export on a slow cloud mount is read only when it changed. A citekey shared by several items is reported, never silently resolved to one of them.
+
 ## Travel
 
 - **[thameslink-engineering-work](thameslink-engineering-work/)** — turn [Thameslink's planned engineering work page](https://www.thameslinkrailway.com/service-updates/planned-engineering-work) into a single `.ics` calendar. The page only shows one day at a time with no overview, so this fetches N consecutive days, de-duplicates the multi-day closures by the stable `INCxxxxxxxx` id already in the server-rendered HTML, and writes one all-day event per item, ready to import into Google Calendar. `--filter` narrows it to routes you actually care about.

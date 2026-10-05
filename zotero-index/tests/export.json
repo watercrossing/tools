@@ -1,0 +1,54 @@
+{
+  "config": {"id": "36a3b0b5-ad0d-4d18-a1d4-b6e3de7a2f6b", "label": "BetterBibTeX JSON", "preferences": {}, "options": {}},
+  "version": {"zotero": "0.0.0", "bbt": "0.0.0"},
+  "collections": {
+    "TEACH001": {"key": "TEACH001", "parent": "", "name": "Teaching", "collections": ["MODA0001"], "items": [1]},
+    "MODA0001": {"key": "MODA0001", "parent": "TEACH001", "name": "Module A", "collections": ["WEEK0001"], "items": [2]},
+    "WEEK0001": {"key": "WEEK0001", "parent": "MODA0001", "name": "Week 1", "collections": [], "items": [1]},
+    "READ0001": {"key": "READ0001", "parent": "", "name": "Reading", "collections": [], "items": [1, 4]}
+  },
+  "items": [
+    {
+      "itemType": "journalArticle", "citationKey": "smith_example_2020", "itemKey": "AAAA1111", "itemID": 1, "key": "AAAA1111",
+      "title": "An Example of Usable Security", "date": "2020-03",
+      "creators": [{"creatorType": "author", "lastName": "Smith", "firstName": "Alice"}, {"creatorType": "author", "lastName": "Jones", "firstName": "Carol"},
+                   {"creatorType": "editor", "lastName": "Editor", "firstName": "Eve"}],
+      "DOI": "https://doi.org/10.1234/Example.2020", "tags": [{"tag": "usability"}, {"tag": "Security", "type": 1}],
+      "abstractNote": "An invented abstract.",
+      "attachments": [
+        {"itemType": "attachment", "title": "Full Text PDF", "path": "C:\\Users\\alice\\Sync\\Zotero\\sm\\smith_example_2020.pdf"},
+        {"itemType": "attachment", "title": "Slides", "path": "C:\\Users\\alice\\Sync\\Zotero\\Archive\\smith_example_2020-slides.pptx"},
+        {"itemType": "attachment", "title": "Full Text (HTML)", "url": "https://example.org/smith"}
+      ],
+      "notes": [{"note": "<p>a child note</p>"}]
+    },
+    {
+      "itemType": "book", "citationKey": "org_handbook_2019", "itemKey": "BBBB2222", "itemID": 2, "key": "BBBB2222",
+      "title": "The Example Handbook", "date": "2019", "creators": [{"creatorType": "author", "name": "Example Organisation"}],
+      "extra": "Publisher-Note: none\nDOI: 10.5555/Handbook", "tags": [],
+      "attachments": [{"itemType": "attachment", "title": "Scan", "path": "C:\\Users\\alice\\Sync\\Zotero\\or\\scan0001.pdf"}]
+    },
+    {
+      "itemType": "conferencePaper", "citationKey": "doe_duplicate_2021", "itemKey": "CCCC3333", "itemID": 3, "key": "CCCC3333",
+      "title": "A Duplicated Paper", "date": "2021-06-01", "creators": [{"creatorType": "author", "lastName": "Doe", "firstName": "Jane"}], "tags": [],
+      "attachments": [{"itemType": "attachment", "path": "C:\\Users\\alice\\Sync\\Zotero\\do\\doe_duplicate_2021.pdf"}]
+    },
+    {
+      "itemType": "conferencePaper", "citationKey": "doe_duplicate_2021", "itemKey": "DDDD4444", "itemID": 4, "key": "DDDD4444",
+      "title": "A Duplicated Paper (second copy)", "date": "2021", "creators": [{"creatorType": "author", "lastName": "Doe", "firstName": "Jane"}], "tags": [],
+      "attachments": [{"itemType": "attachment", "path": "C:\\Users\\alice\\Sync\\Zotero\\do\\doe_duplicate_2021.epub"}]
+    },
+    {
+      "itemType": "report", "citationKey": "lee_noattachment_2018", "itemKey": "EEEE5555", "itemID": 5, "key": "EEEE5555",
+      "title": "A Report Without Files", "date": null, "creators": [{"creatorType": "author", "lastName": "Lee", "firstName": "Kim"}],
+      "tags": [{"tag": "usability"}], "attachments": []
+    },
+    {
+      "itemType": "thesis", "citationKey": "kim_storage_2022", "itemKey": "FFFF6666", "itemID": 6, "key": "FFFF6666",
+      "title": "A Thesis Left in Local Storage", "date": "2022/09/01", "creators": [{"creatorType": "author", "lastName": "Kim", "firstName": "Min"}],
+      "tags": [], "attachments": [{"itemType": "attachment", "path": "C:\\Users\\alice\\Zotero\\storage\\ABCD1234\\kim_storage_2022.pdf"}]
+    },
+    {"itemType": "note", "itemKey": "GGGG7777", "itemID": 7, "note": "<p>a standalone note</p>", "tags": []},
+    {"itemType": "attachment", "title": "Loose file", "path": "C:\\Users\\alice\\Sync\\Zotero\\loose.pdf", "tags": []}
+  ]
+}
