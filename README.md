@@ -15,6 +15,10 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 - **[screenshare-slidegrab](screenshare-slidegrab/)** — the same for a deck shown as a plain screen share, where there is no counter to read: find the stretches where the shared screen holds still, crop out the slide, and keep one image per slide plus a PDF of them all. Slides are compared cropped and size-normalised, so window resizes and Teams layout changes don't make an old slide look new; animation build steps are folded into their final state (a build adds content where the slide was blank, a new slide replaces old text), and revisits are dropped.
 - **[obs-interview-transcript](obs-interview-transcript/)** — transcribe an interview you recorded yourself with OBS, rather than depending on Teams for it: Desktop Audio on track 1, your microphone on track 2, out comes one speaker-attributed transcript. The tracks overlap, because your mic also hears the far end through your speakers, but the desktop track *cannot* contain your voice — so gating the mic against it separates the two, per word rather than per segment. Local Whisper + pyannote; nothing leaves the machine, which is the point when the recording is research data.
 
+## Zoom
+
+- **[zoom-transcript-to-markdown](zoom-transcript-to-markdown/)** — convert the transcript panel of a Zoom cloud-recording share page, saved as HTML, into Markdown: one block per speaker turn, the chat shown alongside the recording, the recording length, and a check for missing transcript rows (holes in the row ids, or a speaker change whose header row was lost).
+
 ## Deployment
 
 - **[github-push-deploy](github-push-deploy/)** — auto-deploy a GitHub repo on every push, using a repo webhook and a small PHP listener on a plain Apache + PHP-FPM box. The listener verifies the webhook's HMAC-SHA256 signature, then clones the repo and runs your own deploy script — publish files, run a build, restart a service, launch a container, whatever you put in it. No CI runner or third-party service; one `deploy.conf` drives it all.
