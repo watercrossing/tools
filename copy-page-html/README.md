@@ -7,8 +7,12 @@ The CSS selector you picked is cached per site, so on later visits to the same s
 ## Install
 
 1. Install [Violentmonkey](https://violentmonkey.github.io/) or [Tampermonkey](https://www.tampermonkey.net/) (or another compatible userscript manager — see [Compatibility](#compatibility)).
-2. Create a new script and paste the contents of [`copy-page-html.user.js`](copy-page-html.user.js), or open the raw file and let the manager offer to install it.
+2. Open the [raw file on GitHub](https://raw.githubusercontent.com/watercrossing/tools/main/copy-page-html/copy-page-html.user.js) and let the manager offer to install it.
+   A copy pasted in by hand before version 0.1.1 has no update URL, so reinstall it this way once.
 3. Open any page.
+
+The script's `@updateURL` points at that same raw file, so the manager picks up new versions on its own.
+It only installs one whose `@version` is higher than the installed one — **bump `@version` in every change you push**.
 
 ## Use
 

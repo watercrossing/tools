@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Copy element HTML (pick & cache)
 // @namespace    https://github.com/ingolfbecker/tools
-// @version      0.1.0
+// @version      0.1.1
 // @description  Pick any element on a page and copy its outer/inner HTML to the clipboard from the userscript-manager menu, no devtools needed. The picked CSS selector is cached per site, so later visits are a single menu click.
 // @author       Ingolf Becker
 // @match        *://*/*
@@ -12,6 +12,8 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
+// @updateURL    https://raw.githubusercontent.com/watercrossing/tools/main/copy-page-html/copy-page-html.user.js
+// @downloadURL  https://raw.githubusercontent.com/watercrossing/tools/main/copy-page-html/copy-page-html.user.js
 // @run-at       document-idle
 // ==/UserScript==
 (function () {
