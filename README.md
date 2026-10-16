@@ -9,7 +9,6 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 
 ## Microsoft Teams
 
-- **[slaac-prefix-watch](slaac-prefix-watch/)** — log which global IPv6 prefixes a host holds, to find out how often the ISP renumbers the line. Consumer routers take a dynamic prefix by DHCPv6-PD and can't be asked about it, but every host's SLAAC addresses carry the prefix and its announced lifetimes. Silent unless the set of preferred prefixes changes — including one appearing where there was none, so it doubles as a sentinel on a LAN without IPv6 — and `--report` summarises the history. Stdlib only and Python 3.10+, so cron can run it with the system interpreter.
 - **[teams-chat-to-markdown](teams-chat-to-markdown/)** — convert a copied Teams meeting-chat HTML export into clean Markdown, preserving authors, timestamps, reply-quotes (as blockquotes), reactions, emoji, and links.
 - **[teams-transcript-to-markdown](teams-transcript-to-markdown/)** — a userscript for a Teams recording's Stream page that scrolls the whole virtualized transcript and downloads it as Markdown in one click, with consecutive speaker turns collapsed and a gap/completeness check for missing entries. The header carries the meeting metadata (title, start, duration, recorder, speakers), and the script updates itself from GitHub.
 - **[teams-slidegrab](teams-slidegrab/)** — recover a deck that was shared live via PowerPoint Live but never handed over as a file: from a recording (OBS or Microsoft Stream), read the on-screen `Slide X of Y` counter with local OCR and save one clean screenshot per slide. CPU-only; nothing leaves the machine.
@@ -36,6 +35,10 @@ See [CLAUDE.md](CLAUDE.md) for the conventions new tools follow.
 ## Hardware
 
 - **[nut-usb-watchdog](nut-usb-watchdog/)** — notice that a USB-attached UPS has stopped talking to [NUT](https://networkupstools.org/), reset the USB device, and restart the driver. Some USB HID UPSes stop answering control transfers while staying enumerated: `lsusb` still lists the device, the kernel logs no disconnect, the driver still claims interface 0 — only the descriptor reads fail, and `upsc` goes `Data stale`. Nothing raises an alarm, because the driver never exits and its unit stays `active`, so the UPS can sit unmonitored for months; and restarting the driver does not help, because a fresh one fails in the same place. A `USBDEVFS_RESET` on the device node does, so that is what this runs, then restarts the unit. Silent when healthy *and* when a reset worked — both go to syslog — so as a cron job it mails only when the UPS is still unreachable afterwards.
+
+## Networking
+
+- **[slaac-prefix-watch](slaac-prefix-watch/)** — log which global IPv6 prefixes a host holds, to find out how often the ISP renumbers the line. Consumer routers take a dynamic prefix by DHCPv6-PD and can't be asked about it, but every host's SLAAC addresses carry the prefix and its announced lifetimes. Silent unless the set of preferred prefixes changes — including one appearing where there was none, so it doubles as a sentinel on a LAN without IPv6 — and `--report` summarises the history. Stdlib only and Python 3.10+, so cron can run it with the system interpreter.
 
 ## Secrets
 
