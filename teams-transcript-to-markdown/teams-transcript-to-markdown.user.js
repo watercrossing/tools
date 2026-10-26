@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Teams transcript → Markdown
 // @namespace    https://github.com/ingolfbecker/tools
-// @version      0.2.0
-// @description  On a Stream recording page, scroll the whole (virtualized) transcript, capture every row and download it as clean Markdown, with consecutive speaker turns collapsed and a gap/completeness check.
+// @version      0.3.0
+// @description  On a Stream recording page or a Teams meeting recap, scroll the whole (virtualized) transcript, capture every row and download it as clean Markdown, with consecutive speaker turns collapsed and a gap/completeness check.
 // @author       Ingolf Becker
 // @match        https://*.sharepoint.com/*stream.aspx*
+// @match        https://*.sharepoint.com/*xplatplugins.aspx*
 // @grant        GM_registerMenuCommand
 // @updateURL    https://raw.githubusercontent.com/watercrossing/tools/main/teams-transcript-to-markdown/teams-transcript-to-markdown.user.js
 // @downloadURL  https://raw.githubusercontent.com/watercrossing/tools/main/teams-transcript-to-markdown/teams-transcript-to-markdown.user.js
@@ -176,10 +177,26 @@
 
   const buildHTML = () => '<div class="ms-List-surface">' + [...store.keys()].sort((a, b) => a - b).map((i) => store.get(i)).join('') + '</div>';
 
-  // The recording's file name, from the ?id= path (".../Recordings/Foo-20240229_142636-Meeting Recording.mp4").
-  function recordingName() {
-    const id = new URLSearchParams(location.search).get('id');
-    const base = id ? id.split('/').pop().replace(/\.[^.]+$/, '') : document.title.replace(/\s*[|–-]\s*Microsoft Stream.*$/i, '');
+  // The SharePoint file behind the page. Stream passes its path as ?id=, the "Meeting Recaps" iframe in Teams (xplatplugins.aspx)
+  // only its GUID as ?uniqueId=. Either way SharePoint's REST API, if we may read the file, gives the path and who recorded it.
+  let fileInfoPromise = null;
+  const fileInfo = () => fileInfoPromise ??= (async () => {
+    const q = new URLSearchParams(location.search), id = q.get('id'), uid = q.get('uniqueId'), info = { path: id, author: null };
+    const api = id ? `GetFileByServerRelativePath(decodedurl='${encodeURIComponent(id.replace(/'/g, "''"))}')` : uid && `GetFileById('${encodeURIComponent(uid)}')`;
+    if (api) {
+      try {
+        const r = await fetch(`${siteUrl()}/_api/web/${api}?$select=ServerRelativeUrl,Author/Title&$expand=Author`,
+                              { headers: { Accept: 'application/json;odata=nometadata' }, credentials: 'include', signal: AbortSignal.timeout(5000) });
+        if (r.ok) { const j = await r.json(); info.path ??= j.ServerRelativeUrl; info.author = j.Author?.Title || null; }
+      } catch (e) { console.warn(LOG, 'no file metadata:', e); }
+    }
+    return info;
+  })();
+  const siteUrl = () => location.origin + location.pathname.split('/_layouts/')[0];
+
+  // The recording's file name, from its path (".../Recordings/Foo-20240229_142636-Meeting Recording.mp4").
+  function recordingName(path) {
+    const base = path ? path.split('/').pop().replace(/\.[^.]+$/, '') : document.title.replace(/\s*[|–-]\s*Microsoft (Stream|Teams).*$/i, '');
     return base.trim() || 'transcript';
   }
   const fileSafe = (s) => s.replace(/[\\/:*?"<>|]+/g, '_');
@@ -193,39 +210,30 @@
   }
 
   // Meeting metadata for the header. The file name gives title and start ("<title>-20240229_142636-Meeting Recording");
-  // the player gives the duration; SharePoint's REST API, if we may read the file's item, gives who recorded it.
+  // the player, if there is one, gives the duration; the REST API gives who recorded it.
   async function meetingMeta() {
-    const name = recordingName(), id = new URLSearchParams(location.search).get('id');
-    const m = name.match(/^(.*?)-(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)(?:-Meeting Recording)?$/);
+    const { path, author } = await fileInfo(), name = recordingName(path);
+    const m = name.match(/^(.*?)-(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)(?:-Meeting (?:Recording|Transcript))?$/);
     const video = [...document.querySelectorAll('video')].find((v) => isFinite(v.duration) && v.duration > 0);
-    let author = null;
-    if (id) {
-      try {
-        const site = location.pathname.split('/_layouts/')[0];
-        const r = await fetch(`${site}/_api/web/GetFileByServerRelativePath(decodedurl='${encodeURIComponent(id.replace(/'/g, "''"))}')?$select=Author/Title&$expand=Author`,
-                              { headers: { Accept: 'application/json;odata=nometadata' }, credentials: 'include', signal: AbortSignal.timeout(5000) });
-        if (r.ok) author = (await r.json()).Author?.Title || null;
-      } catch (e) { console.warn(LOG, 'no file metadata:', e); }
-    }
     return {
-      title: m ? m[1].trim() : name,
+      name, title: m ? m[1].trim() : name,
       meta: [
         ['Recorded', m && `${m[2]}-${m[3]}-${m[4]} ${m[5]}:${m[6]}:${m[7]}`],
         ['Duration', video && fmtTs(Math.round(video.duration))],
         ['Recorded by', author],
-        ['Recording', id && `${location.origin}${location.pathname}?id=${encodeURIComponent(id)}`],
+        ['Recording', path && `${siteUrl()}/_layouts/15/stream.aspx?id=${encodeURIComponent(path)}`],
       ],
     };
   }
 
   async function downloadMarkdown() {
-    const { title, meta } = await meetingMeta(), { markdown, entries, total, gaps } = toMarkdown(buildHTML(), { title, meta });
-    save(markdown, fileSafe(recordingName()) + '.md', 'text/markdown');
+    const { name, title, meta } = await meetingMeta(), { markdown, entries, total, gaps } = toMarkdown(buildHTML(), { title, meta });
+    save(markdown, fileSafe(name) + '.md', 'text/markdown');
     console.log(LOG, `downloaded ${entries.length} of ${total} entries; ${gaps.length} gap/completeness issue(s)`, gaps.map((g) => g.detail));
     return gaps;
   }
 
-  const downloadHTML = () => save(buildHTML(), fileSafe(recordingName()) + '.html', 'text/html');
+  const downloadHTML = async () => save(buildHTML(), fileSafe(recordingName((await fileInfo()).path)) + '.html', 'text/html');
 
   // ---- UI -----------------------------------------------------------------------------------------------------------
 

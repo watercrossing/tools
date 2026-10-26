@@ -1,6 +1,6 @@
 # teams-transcript-to-markdown
 
-Capture a Microsoft Teams meeting transcript from its Stream recording page and download it as clean Markdown, with consecutive speaker turns collapsed and a completeness check that flags missing entries and suspicious time gaps.
+Capture a Microsoft Teams meeting transcript from its Stream recording page, or from the meeting's recap in Teams, and download it as clean Markdown, with consecutive speaker turns collapsed and a completeness check that flags missing entries and suspicious time gaps.
 
 Teams renders the transcript as a **virtualized list**: only the rows near the viewport exist in the DOM at any moment, and off-screen rows are destroyed as you scroll.
 You can't just select-all and copy.
@@ -17,9 +17,14 @@ GitHub caches raw files for about five minutes, so a check straight after a push
 
 It runs on `https://*.sharepoint.com/*stream.aspx*` — the page a Teams recording opens in, e.g. `https://liveuclac-my.sharepoint.com/personal/…/_layouts/15/stream.aspx?id=…Meeting%20Recording.mp4`.
 
+It also runs on `https://*.sharepoint.com/*xplatplugins.aspx*`, the SharePoint iframe that Teams' **Meeting Recaps** view embeds.
+That is the only place a meeting that was transcribed but not recorded still shows its transcript, and the iframe can't be opened in a tab of its own.
+Userscript managers match each frame against its own URL, so it doesn't matter whether the Teams page around it is `teams.microsoft.com` or `teams.cloud.microsoft`.
+The iframe passes only the file's GUID (`?uniqueId=…`), so the title, start time and author are looked up through SharePoint's REST API.
+
 ## Use
 
-1. Open the recording and open its **Transcript** panel.
+1. Open the recording and open its **Transcript** panel, or open the meeting under **Meeting Recaps** in Teams and pick its **Transcript** tab.
 2. A **Transcript → Markdown** button appears bottom-right once transcript rows are on the page.
 3. Click it. It scrolls the transcript top to bottom (the button shows `captured/total`), then downloads `<recording name>.md`.
 
