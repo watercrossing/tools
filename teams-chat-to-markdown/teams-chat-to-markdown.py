@@ -40,7 +40,8 @@ def derive_offset(soup):
     """Client local-time offset, from a message's UTC `datetime` vs its visible HH:MM."""
     for tm in soup.find_all("time"):
         dt_attr = tm.get("datetime")
-        m = re.match(r"^\s*(\d{1,2}):(\d{2})", tm.get_text(strip=True))
+        # Visible text may carry a prefix ("Friday 09:57", "07/10 15:34"): take the last HH:MM.
+        m = re.search(r"(\d{1,2}):(\d{2})\D*$", tm.get_text(strip=True))
         if not dt_attr or not m:
             continue
         try:
