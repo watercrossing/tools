@@ -84,6 +84,7 @@ root                  directory to scan (default: current)
 --max-lines N         hard cap; over this is an error (default: 150, 0 disables)
 --warn-lines N        soft cap; over this is a warning (default: 100, 0 disables)
 --exempt GLOB         glob, relative to root, exempt from the size caps; repeatable
+--staged              apply the size caps only to .md files staged in root's git index
 --no-orphans          skip the unreachable-page check
 --strict              exit non-zero on warnings too
 -q, --quiet           print problems only, no summary
@@ -92,12 +93,16 @@ root                  directory to scan (default: current)
 Size caps suit a docs tree meant to be read whole by an agent, where a long file is a real cost.
 Set `--max-lines 0 --warn-lines 0` to turn them off and use this purely as a link checker.
 
+`--staged` is for pre-commit hooks: an existing oversized file you didn't touch no longer blocks an unrelated commit.
+Link, anchor and orphan checks still cover the whole tree, since the links a rename breaks live in files outside the diff.
+The tool reads the working tree, not the index, so a file with unstaged edits is measured as it is on disk.
+
 ## As a git hook
 
 ```sh
 cat > .git/hooks/pre-commit <<'EOF'
 #!/bin/sh
-exec /path/to/markdown-docs-lint.py "$(git rev-parse --show-toplevel)" --exempt README.md
+exec /path/to/markdown-docs-lint.py "$(git rev-parse --show-toplevel)" --staged --exempt README.md
 EOF
 chmod +x .git/hooks/pre-commit
 ```
@@ -117,5 +122,5 @@ uv run tests/test_markdown_docs_lint.py     # self-contained, installs pytest vi
 pytest tests/
 ```
 
-19 tests, driving the real CLI end to end.
+22 tests, driving the real CLI end to end.
 The em-dash case is a named regression test.

@@ -18,7 +18,7 @@ the output.
 Fenced code blocks and inline code spans are blanked before links are extracted, so a `[x](y)` in a shell example is not mistaken for a link and
 a "# comment" inside a fence is not mistaken for a heading. Blanking preserves line numbers, so diagnostics still point at the right line.
 """
-import argparse, fnmatch, re, sys, urllib.parse
+import argparse, fnmatch, re, subprocess, sys, urllib.parse
 from collections import deque
 from pathlib import Path
 
@@ -79,6 +79,7 @@ def main():
     p.add_argument("--max-lines", type=int, default=150, help="hard cap; over this is an error (default: 150, 0 disables)")
     p.add_argument("--warn-lines", type=int, default=100, help="soft cap; over this is a warning (default: 100, 0 disables)")
     p.add_argument("--exempt", action="append", default=[], help="glob, relative to root, exempt from the size caps; repeatable")
+    p.add_argument("--staged", action="store_true", help="apply the size caps only to .md files staged in root's git index (for pre-commit)")
     p.add_argument("--no-orphans", action="store_true", help="skip the unreachable-page check")
     p.add_argument("--strict", action="store_true", help="exit non-zero on warnings too")
     p.add_argument("-q", "--quiet", action="store_true", help="print problems only, no summary")
@@ -93,6 +94,13 @@ def main():
     text = {f: f.read_text(encoding="utf-8", errors="replace") for f in files}
     anchor_cache = {f: anchors(t) for f, t in text.items()}
     rel = lambda f: str(f.relative_to(root))
+    staged = None
+    if args.staged:  # an existing oversized file you didn't touch shouldn't block an unrelated commit; links stay tree-wide on purpose
+        r = subprocess.run(["git", "-C", str(root), "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z", "--relative"],
+                           capture_output=True, text=True)
+        if r.returncode:
+            sys.exit(f"--staged: git diff failed in {root}: {r.stderr.strip()}")
+        staged = {(root / n).resolve() for n in r.stdout.split("\0") if n}
 
     problems, graph = [], {f: set() for f in files}
     for f in files:
@@ -117,7 +125,7 @@ def main():
 
     for f in files:
         n = len(text[f].splitlines())
-        if any(fnmatch.fnmatch(rel(f), g) for g in args.exempt):
+        if any(fnmatch.fnmatch(rel(f), g) for g in args.exempt) or (staged is not None and f not in staged):
             continue
         if args.max_lines and n > args.max_lines:
             problems.append((rel(f), n, "error", "size", f"{n} lines, over the {args.max_lines}-line cap -- split it"))

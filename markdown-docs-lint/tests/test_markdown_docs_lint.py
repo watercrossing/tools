@@ -140,6 +140,19 @@ def test_size_caps_and_exemption(tmp_path):
     assert lint(root, "--max-lines", "0", "--warn-lines", "0").returncode == 0
 
 
+def test_staged_limits_size_caps_to_the_index_but_not_links(tmp_path):
+    root = tree(tmp_path, **{"README.md": "# R\n\n[big](big.md) [mid](mid.md)\n",
+                             "big.md": "# Big\n" + "line\n" * 200, "mid.md": "# Mid\n" + "line\n" * 120})
+    git = lambda *a: subprocess.run(["git", "-C", str(root), *a], check=True, capture_output=True)
+    git("init", "-q")
+    git("add", "README.md", "mid.md")
+    r = lint(root, "--staged")
+    assert r.returncode == 0 and "big.md" not in r.stdout and "mid.md:121: warning: [size]" in r.stdout
+    git("add", "big.md")
+    assert "big.md:201: error: [size]" in lint(root, "--staged").stdout
+    (root / "README.md").write_text("# R\n\n[big](big.md) [mid](mid.md) [gone](nope.md)\n")  # unstaged edit: links are still checked
+    assert "[link] missing file: nope.md" in lint(root, "--staged").stdout
+
 def test_custom_entry_point(tmp_path):
     root = tree(tmp_path, **{"index.md": "# I\n\n[a](a.md)\n", "a.md": "# A\n"})
     assert lint(root, "--entry", "index.md", "--no-orphans").returncode == 0
