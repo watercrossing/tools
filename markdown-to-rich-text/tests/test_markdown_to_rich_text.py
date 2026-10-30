@@ -131,6 +131,7 @@ def test_single_newlines_are_line_breaks(page):
 
 def test_joining_single_newlines_into_one_paragraph(page):
     page.check("#join")
+    page.uncheck("#gap")
     page.select_option("#size", "")
     page.fill("#md", "One sentence.\nAnother sentence.\n\nNew paragraph.\n\n- item\n  continued\n\nHard  \nbreak\n\n```\nkeep\nthese\n```\n")
     html = page.inner_html("#preview")
@@ -141,6 +142,19 @@ def test_joining_single_newlines_into_one_paragraph(page):
     assert page.is_checked("#join")                               # the choice is remembered
     page.uncheck("#join")
     assert "One sentence.<br>" in copied(page, "One sentence.\nAnother sentence.\n")["html"]  # and off means line breaks again
+
+
+def test_blank_line_between_paragraphs(page):
+    page.select_option("#size", "")
+    html = copied(page, "One\n\nTwo\n\nThree\n\n- item\n\nFour\n")["html"]
+    assert html.count("\u00a0</p>") == 2 or html.count("&nbsp;</p>") == 2  # between One/Two and Two/Three, not around the list
+    assert page.locator("#preview p").count() == 6 and page.inner_text("#preview p:nth-child(2)").strip() == ""
+    assert page.evaluate("getComputedStyle(document.querySelector('#preview p')).marginBottom") == "0px"
+    page.uncheck("#gap")
+    assert page.locator("#preview p").count() == 4
+    assert page.evaluate("getComputedStyle(document.querySelector('#preview p')).marginBottom") != "0px"
+    page.reload()
+    assert not page.is_checked("#gap")                            # the choice is remembered
 
 
 def test_text_size_applies_to_body_text_but_not_headings(page):

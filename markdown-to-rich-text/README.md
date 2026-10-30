@@ -28,6 +28,8 @@ The clipboard gets two versions: HTML, which Outlook and Word use, and the origi
 - Headings, paragraphs and lists carry no styling of their own, so they take on the destination's styles: `#` becomes the **Heading 1** style, `##` **Heading 2**, and so on, in the document's or email's own font.
 - The one exception is the size of body text (paragraphs, list items, table cells), set by **Text size** (11pt by default, remembered in the browser): left unsized, it pastes at the HTML default of 12pt rather than the destination's own size.
   Choose *destination's default* to leave it off.
+- **Blank line between paragraphs** (on by default, remembered in the browser) puts an empty paragraph between consecutive paragraphs, so they stay visibly apart even under Outlook's **Merge formatting**.
+  Untick it to leave the spacing to the destination.
 - Everything else is styled inline, because Outlook and Word ignore stylesheets on paste: code is Consolas on a light grey background, table cells get borders, and block quotes get a grey bar on the left.
 - Task-list checkboxes (`- [x]`) become ☑ / ☐, since form controls don't survive the paste.
 - Relative links, such as Claude's links to files in a repo, keep their text but lose the link, and relative images are dropped, because neither would work in an email.

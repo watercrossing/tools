@@ -100,6 +100,7 @@ textarea {
   <button id="copy" type="button">Copy formatted text</button>
   <label><input id="auto" type="checkbox" checked> Pasting replaces the text and copies the result straight away</label>
   <label><input id="join" type="checkbox"> Join single line breaks into one paragraph</label>
+  <label><input id="gap" type="checkbox" checked> Blank line between paragraphs</label>
   <label>Text size
     <select id="size">
       <option value="">destination's default</option>
@@ -130,6 +131,7 @@ const md = document.getElementById("md");
 const preview = document.getElementById("preview");
 const auto = document.getElementById("auto");
 const join = document.getElementById("join");
+const gap = document.getElementById("gap");
 const size = document.getElementById("size");
 const status = document.getElementById("status");
 
@@ -162,6 +164,13 @@ function toRichHtml(text) {
   for (const img of root.querySelectorAll("img")) if (!/^(https?:|data:)/i.test(img.getAttribute("src") || "")) img.remove();
   for (const [sel, style] of Object.entries(STYLES)) {
     for (const el of root.querySelectorAll(sel)) if (!el.closest("pre") || sel === "pre") el.setAttribute("style", style);
+  }
+  // A real empty paragraph, not margins: Outlook's "Merge formatting" drops paragraph spacing. Margins go, or the gap would be doubled.
+  if (gap.checked) for (const p of root.querySelectorAll("p + p")) {
+    const blank = document.createElement("p");
+    blank.textContent = "\u00a0";
+    blank.style.margin = p.style.marginTop = p.previousElementSibling.style.marginBottom = "0";
+    p.before(blank);
   }
   // Unsized body text pastes at the HTML default of 12pt rather than the destination's own size. Headings stay unsized.
   if (size.value) for (const el of root.querySelectorAll("p, li, th, td")) el.style.fontSize = `${size.value}pt`;
@@ -221,6 +230,7 @@ document.getElementById("copy").addEventListener("click", copy);
 try {
   auto.checked = localStorage.getItem("md2rich-auto") !== "off";
   join.checked = localStorage.getItem("md2rich-join") === "on";
+  gap.checked = localStorage.getItem("md2rich-gap") !== "off";
   size.value = localStorage.getItem("md2rich-size") ?? size.value;
 } catch {}
 auto.addEventListener("change", () => {
@@ -233,6 +243,13 @@ join.addEventListener("change", () => {
   say("");
   try {
     localStorage.setItem("md2rich-join", join.checked ? "on" : "off");
+  } catch {}
+});
+gap.addEventListener("change", () => {
+  render();
+  say("");
+  try {
+    localStorage.setItem("md2rich-gap", gap.checked ? "on" : "off");
   } catch {}
 });
 size.addEventListener("change", () => {
