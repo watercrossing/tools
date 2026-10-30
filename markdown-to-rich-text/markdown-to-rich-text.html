@@ -99,6 +99,7 @@ textarea {
 <div class="bar">
   <button id="copy" type="button">Copy formatted text</button>
   <label><input id="auto" type="checkbox" checked> Pasting replaces the text and copies the result straight away</label>
+  <label><input id="join" type="checkbox"> Join single line breaks into one paragraph</label>
   <label>Text size
     <select id="size">
       <option value="">destination's default</option>
@@ -128,6 +129,7 @@ import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.es.m
 const md = document.getElementById("md");
 const preview = document.getElementById("preview");
 const auto = document.getElementById("auto");
+const join = document.getElementById("join");
 const size = document.getElementById("size");
 const status = document.getElementById("status");
 
@@ -146,8 +148,9 @@ const STYLES = {
 // Markdown -> an HTML fragment that pastes well into Outlook and Word.
 function toRichHtml(text) {
   const tpl = document.createElement("template");
-  // breaks: a single newline is a line break, as Claude and GitHub comments render it, rather than joining the lines.
-  tpl.innerHTML = DOMPurify.sanitize(marked.parse(text, { gfm: true, breaks: true }));
+  // breaks: a single newline is a line break, as Claude and GitHub comments render it. Off, the lines join as strict Markdown has it,
+  // for text written with one sentence per line.
+  tpl.innerHTML = DOMPurify.sanitize(marked.parse(text, { gfm: true, breaks: !join.checked }));
   const root = tpl.content;
   // Task-list checkboxes become glyphs: form controls don't survive the paste.
   for (const box of root.querySelectorAll("input[type=checkbox]")) box.replaceWith(box.checked ? "☑" : "☐");
@@ -217,11 +220,19 @@ document.getElementById("copy").addEventListener("click", copy);
 
 try {
   auto.checked = localStorage.getItem("md2rich-auto") !== "off";
+  join.checked = localStorage.getItem("md2rich-join") === "on";
   size.value = localStorage.getItem("md2rich-size") ?? size.value;
 } catch {}
 auto.addEventListener("change", () => {
   try {
     localStorage.setItem("md2rich-auto", auto.checked ? "on" : "off");
+  } catch {}
+});
+join.addEventListener("change", () => {
+  render();
+  say("");
+  try {
+    localStorage.setItem("md2rich-join", join.checked ? "on" : "off");
   } catch {}
 });
 size.addEventListener("change", () => {

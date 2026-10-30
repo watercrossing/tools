@@ -37,6 +37,8 @@ The clipboard gets two versions: HTML, which Outlook and Word use, and the origi
 The preview shows exactly the HTML that gets copied.
 Markdown is parsed with [marked](https://marked.js.org/) (GitHub-flavoured), loaded from jsdelivr.
 A single line break is kept as a line break, as Claude and GitHub comments render it, instead of being joined into the paragraph as strict Markdown would.
+Tick **Join single line breaks into one paragraph** (off by default, remembered in the browser) for the strict behaviour, when pasting raw `.md` written with one sentence per line.
+Blank lines still separate paragraphs, and a hard break (two trailing spaces) still breaks the line.
 
 ## Tests
 

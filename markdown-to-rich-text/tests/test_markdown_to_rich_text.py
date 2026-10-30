@@ -129,6 +129,20 @@ def test_single_newlines_are_line_breaks(page):
     assert "<strong>Traveller:</strong> me<br><strong>Purpose:</strong> a workshop" in html
 
 
+def test_joining_single_newlines_into_one_paragraph(page):
+    page.check("#join")
+    page.select_option("#size", "")
+    page.fill("#md", "One sentence.\nAnother sentence.\n\nNew paragraph.\n\n- item\n  continued\n\nHard  \nbreak\n\n```\nkeep\nthese\n```\n")
+    html = page.inner_html("#preview")
+    assert "<p>One sentence.\nAnother sentence.</p>" in html and "<p>New paragraph.</p>" in html
+    assert page.inner_text("#preview p:first-child") == "One sentence. Another sentence."  # the newline renders as a space
+    assert "item\ncontinued" in html and "Hard<br>" in html and "keep\nthese" in html
+    page.reload()
+    assert page.is_checked("#join")                               # the choice is remembered
+    page.uncheck("#join")
+    assert "One sentence.<br>" in copied(page, "One sentence.\nAnother sentence.\n")["html"]  # and off means line breaks again
+
+
 def test_text_size_applies_to_body_text_but_not_headings(page):
     html = copied(page, "# Head\n\nbody\n\n- item\n")["html"]
     assert "<h1>Head</h1>" in html
