@@ -108,6 +108,76 @@ def test_explicit_missing_config_is_an_error_even_with_export(env):
     assert r.returncode == 3 and "nope.toml" in r.stderr
 
 
+# --- several exports ---
+
+def second_export(env, title="From the second export", age=0):
+    """Write a retitled copy of the export beside the first, age seconds off its mtime, and list both in the config."""
+    other = env / "second.json"
+    data = json.loads((env / "library.json").read_text())
+    data["items"][0]["title"] = title
+    other.write_text(json.dumps(data))
+    st = (env / "library.json").stat()
+    os.utime(other, ns=(st.st_atime_ns, st.st_mtime_ns + age * 10**9))
+    cfg = env / "config" / "zotero-index" / "config.toml"
+    cfg.write_text(cfg.read_text().replace(f'export = "{env / "library.json"}"', f'export = ["{env / "library.json"}", "second.json"]'))
+    (env / "config" / "zotero-index" / "second.json").symlink_to(other)  # a relative entry is relative to the config, as for a single export
+    return other
+
+
+def test_newest_export_wins_and_the_other_takes_over_when_it_is_newer(env):
+    second_export(env, age=10)
+    r = run(env, "show", "smith_example_2020")
+    assert "From the second export" in r.stdout and r.stderr == ""
+    os.utime(env / "library.json", ns=(0, (env / "second.json").stat().st_mtime_ns + 10**9))
+    assert "An Example of Usable Security" in run(env, "show", "smith_example_2020").stdout
+
+
+def test_equal_mtimes_use_the_export_listed_first(env):
+    second_export(env)
+    assert "An Example of Usable Security" in run(env, "show", "smith_example_2020").stdout
+
+
+def test_missing_export_is_skipped_with_a_warning(env):
+    second_export(env, age=-10)
+    (env / "library.json").unlink()
+    r = run(env, "show", "smith_example_2020")
+    assert r.returncode == 0 and "From the second export" in r.stdout and "skipped" in r.stderr and "library.json" in r.stderr
+
+
+def test_all_exports_missing_names_them_all(env):
+    second_export(env).unlink()
+    (env / "library.json").unlink()
+    r = run(env, "show", "smith_example_2020")
+    assert r.returncode == 3 and "export not found" in r.stderr and "library.json" in r.stderr and "second.json" in r.stderr
+
+
+def test_unreadable_newest_export_falls_back_with_a_warning(env):
+    other = second_export(env, age=10)
+    other.write_text('{"config": ')  # as if caught halfway through being written
+    os.utime(other, ns=(0, (env / "library.json").stat().st_mtime_ns + 10**10))
+    r = run(env, "show", "smith_example_2020")
+    assert r.returncode == 0 and "An Example of Usable Security" in r.stdout and "skipped" in r.stderr and "not a BetterBibTeX JSON export" in r.stderr
+
+
+def test_all_exports_unreadable_is_a_short_error(env):
+    second_export(env, age=10).write_text("nope")
+    (env / "library.json").write_text("nope")
+    r = run(env, "show", "smith_example_2020")
+    assert r.returncode == 3 and "library.json" in r.stderr and "second.json" in r.stderr and "Traceback" not in r.stderr
+
+
+def test_export_flag_overrides_the_list(env):
+    second_export(env, age=10)
+    assert "An Example of Usable Security" in run(env, "show", "smith_example_2020", "--export", str(env / "library.json")).stdout
+
+
+def test_export_of_the_wrong_type_is_a_short_error(env):
+    cfg = env / "config" / "zotero-index" / "config.toml"
+    cfg.write_text("export = 3\n")
+    r = run(env, "show", "smith_example_2020")
+    assert r.returncode == 3 and "must be a path or a list" in r.stderr and "Traceback" not in r.stderr
+
+
 # --- index freshness ---
 
 def test_rebuilds_when_export_changes(env):

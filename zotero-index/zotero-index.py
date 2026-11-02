@@ -7,6 +7,8 @@
 No Zotero install, no web API, no API key: the export is the only input, e.g. synced to other machines by a cloud drive.
 Attachment paths in the export are absolute paths on the exporting host, often Windows; a [path_map] in the config rewrites them for this one.
 
+The config can name several exports, e.g. one per machine that writes one: each run stats them all and uses the most recently modified.
+
 A slim index is cached per export under $XDG_CACHE_HOME/zotero-index/. Every run stats the export (and the config) once and rebuilds the index
 only if mtime or size changed, so an export sitting on a slow FUSE mount is read only when it has actually changed. The index file's first line
 is a small header holding those stat values, so a fresh index is detected without parsing the rest.
@@ -40,7 +42,7 @@ def cache_dir():
 
 
 def load_config(config_arg, export_arg):
-    """Return (config path or None, export path, path_map). The config is optional only when --export names the export directly."""
+    """Return (config path or None, export paths, path_map). The config is optional only when --export names the export directly."""
     path = Path(config_arg).expanduser() if config_arg else default_config_path()
     if path.is_file():
         with path.open("rb") as f:
@@ -52,14 +54,15 @@ def load_config(config_arg, export_arg):
         raise SetupError(f"no config at {path}; create it with export = \"/path/to/library.json\", or pass --export")
     else:
         path, cfg = None, {}
-    export = export_arg or cfg.get("export")
-    if not export:
+    exports = export_arg or cfg.get("export")
+    exports = [exports] if isinstance(exports, str) else exports
+    if not exports:
         raise SetupError(f"{path}: no 'export' set; add export = \"/path/to/library.json\", or pass --export")
-    export = Path(export).expanduser()
-    if not export.is_absolute():
-        export = (path.parent if path and not export_arg else Path.cwd()) / export
+    if not isinstance(exports, list) or not all(isinstance(e, str) for e in exports):
+        raise SetupError(f"{path}: 'export' must be a path or a list of paths")
+    base = path.parent if path and not export_arg else Path.cwd()
     path_map = {k: str(v) for k, v in (cfg.get("path_map") or {}).items()}
-    return path, export.absolute(), path_map
+    return path, [(base / Path(e).expanduser()).absolute() for e in exports], path_map
 
 
 # --- path mapping ----------------------------------------------------------------------------------------------------------------------------
@@ -144,13 +147,31 @@ def stamp(path):
     return [str(path), st.st_mtime_ns, st.st_size]
 
 
-def load_index(config_path, export_path, path_map):
-    """Return the records, rebuilding the cached index if the export or config changed since it was written."""
-    try:
-        header = {"version": INDEX_VERSION, "export": stamp(export_path), "config": stamp(config_path)}
-    except FileNotFoundError as e:
+def load_index(config_path, exports, path_map):
+    """Return the records of the most recently modified export that can be read; on equal mtimes, the one listed first. The rest are only statted."""
+    stamps, problems = {}, []
+    for export in exports:
+        try:
+            stamps[export] = stamp(export)
+        except OSError as e:
+            problems.append(f"{export}: {e.strerror}")
+    if not stamps:
         where = f" (set in {config_path})" if config_path else ""
-        raise SetupError(f"export not found: {e.filename}{where}; expected config at {config_path or default_config_path()}")
+        raise SetupError(f"export not found: {', '.join(problems)}{where}; expected config at {config_path or default_config_path()}")
+    for export in sorted(stamps, key=lambda e: stamps[e][1], reverse=True):
+        try:
+            records = load_export(export, {"version": INDEX_VERSION, "export": stamps[export], "config": stamp(config_path)}, path_map)
+        except SetupError as e:
+            problems.append(str(e))
+            continue
+        for problem in problems:
+            print(f"zotero-index: skipped {problem}", file=sys.stderr)
+        return records
+    raise SetupError("; ".join(problems))
+
+
+def load_export(export_path, header, path_map):
+    """Return one export's records, rebuilding its cached index if the export or config changed since it was written."""
     cache = cache_dir() / f"{hashlib.sha256(str(export_path).encode()).hexdigest()[:16]}.json"
     try:
         with cache.open(encoding="utf-8") as f:

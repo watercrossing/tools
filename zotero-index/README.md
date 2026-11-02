@@ -47,6 +47,12 @@ export = "~/sync/Zotero/library.json"
 'C:\Users\alice\Sync\Zotero\Archive' = "/mnt/archive/zotero"
 ```
 
+`export` can also be a list, for a library exported from more than one machine; the most recently modified file is used:
+
+```toml
+export = ["~/sync/Zotero/library.json", "/var/lib/zotero/library-local.json"]
+```
+
 - Use single-quoted TOML strings for Windows paths, so backslashes are literal.
 - `~` is expanded in `export` and in the mapped-to prefixes; a relative `export` is relative to the config file.
 - Prefixes match on whole path components (`…\Zotero` does not match `…\ZoteroOld`), case-insensitively for Windows paths.
@@ -54,8 +60,11 @@ export = "~/sync/Zotero/library.json"
 - An attachment whose path matches no prefix is **unmapped**: `path` reports it on stderr rather than printing a path that doesn't exist here, and `check` lists them all.
   Typically these are files Zotero still keeps in its own `storage/` folder on the exporting machine.
 - With no `[path_map]` at all, paths are passed through unchanged (forward slashes aside), for a library exported on the same machine.
+- With a list, `[path_map]` applies to every export, so give it the prefixes of each exporting machine.
+  On equal modification times the export listed first wins.
+  A listed export that is missing or can't be parsed is skipped with a warning on stderr, as long as another one works.
 
-`--config FILE` reads a different config; `--export FILE` overrides the export path, and with it the config becomes optional.
+`--config FILE` reads a different config; `--export FILE` overrides the export path or list, and with it the config becomes optional.
 A missing config or export is a short error naming the path it expected.
 
 ## Commands
@@ -85,8 +94,8 @@ Exit status 3 means the config or the export is missing or unreadable.
 
 Reading a multi-MB export on every call would be slow, especially if it sits on a network or FUSE mount, so the tool keeps a slim index in `$XDG_CACHE_HOME/zotero-index/` (default `~/.cache/zotero-index/`), one per export.
 
-Every run stats the export and the config once and compares mtime and size with the values the index was built from.
-If anything changed, it re-reads the export and rebuilds; otherwise the export is not opened at all.
+Every run stats each export and the config once, picks the newest export, and compares its mtime and size with the values its index was built from.
+If anything changed, it re-reads that export and rebuilds; otherwise the export is not opened at all, and the others never are.
 The index is written to a temp file and renamed into place, so concurrent runs are safe.
 There is no file watcher and nothing to schedule: the next query after the export changes picks it up.
 Delete the cache directory to force a rebuild.
