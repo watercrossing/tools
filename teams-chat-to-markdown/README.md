@@ -1,84 +1,89 @@
 # teams-chat-to-markdown
 
-Convert a Microsoft Teams meeting-chat HTML export into clean, readable Markdown — authors, timestamps, reply-quotes (as blockquotes), reactions, emoji, and links all preserved.
+Capture a Microsoft Teams chat or meeting chat from the Teams web app and download it as clean Markdown, with authors, times, reply-quotes (as blockquotes), reactions, emoji and links preserved.
 
-Teams has no "export chat" button, so you capture the message-pane HTML yourself from the browser's dev tools and feed it to this tool.
-It anchors on stable `data-tid` / `id` attributes rather than Teams' obfuscated CSS classes, so it survives cosmetic restyles.
+Teams has no "export chat" button, and its message list is both **virtualized** (only the rows near the viewport exist in the DOM, and off-screen rows are destroyed as you scroll) and **lazily loaded** (older messages are fetched from the server only as you scroll up).
+You can't just select-all and copy.
+The userscript scrolls the chat back to its first message itself, keeps every message it has seen (keyed by its epoch-millisecond id, so re-rendered rows are de-duped), and converts the result to Markdown in the browser.
 
-## Usage
+## Install
 
-```bash
-uv run teams-chat-to-markdown.py <input.html> [output.md]
-```
+1. Install [Violentmonkey](https://violentmonkey.github.io/) or [Tampermonkey](https://www.tampermonkey.net/).
+2. Open the [raw file on GitHub](https://raw.githubusercontent.com/watercrossing/tools/main/teams-chat-to-markdown/teams-chat-to-markdown.user.js) and let the manager offer to install it.
 
-- `<input.html>` is the copied HTML subtree of the Teams message pane — see [capturing-the-export.md](capturing-the-export.md) for how to grab it.
-- If `output.md` is omitted, the Markdown is written next to the input file with a `.md` extension.
-- Needs [uv](https://docs.astral.sh/uv/); it fetches Python and `beautifulsoup4` automatically.
-  On Windows, set `PYTHONIOENCODING=utf-8` if the console errors on emoji — the written file is always UTF-8.
+The script's `@updateURL` points at that same raw file, so the manager picks up new versions on its own (or on demand via its "check for updates").
+It only installs one whose `@version` is higher than the installed one — **bump `@version` in every change you push**, or nobody gets it.
 
-The tool auto-detects the meeting date, the client timezone offset (from a message's UTC `datetime` vs its shown time), and the meeting name (used as the title).
-It prints the message and participant counts so you can sanity-check completeness.
+It runs on `https://teams.microsoft.com/*`, `https://teams.cloud.microsoft/*` and `https://teams.live.com/*`.
 
-## Capturing the export
+## Use
 
-Because Teams renders the chat as a *virtualized list*, only messages you have scrolled past exist in the page's HTML.
-**Scroll to the very top and the very bottom** of the conversation before copying, or the capture will be silently incomplete.
-Full steps are in [capturing-the-export.md](capturing-the-export.md); in short:
+1. Open the chat in the Teams web app: a group or one-to-one chat, or a meeting's **Chat** tab.
+2. A **Chat → Markdown** button appears in the top-right corner of the message list; it hides while no chat is open.
+3. Click it. It jumps to the newest message, scrolls up until Teams has nothing older to load (the button counts the messages captured), then downloads `<chat name> <date of first message>.md` and scrolls back down.
 
-1. Open the chat in a web browser (`teams.microsoft.com`).
-2. Scroll to the very top **and** bottom so every message loads.
-3. DevTools (F12) → **Elements**, `Ctrl+F` for `chat-pane-list` (or `message-pane-list-runway`).
-4. Right-click that element → **Copy → Copy element**.
-5. Paste into a file, e.g. `chatlog.html`, and save.
+On a long chat the scroll back takes a while, since Teams fetches older messages in pages.
+If the list stops loading before it reaches the beginning, the button shows `⚠ start not reached` and the Markdown says so under its header.
+The userscript manager's menu has the same action, plus **Download captured chat HTML** for the raw rows captured (on their own, the rows currently on screen).
 
-## Checking the output
+Without a userscript manager, paste the whole file into the DevTools console instead: it adds the same button and exposes `TC.run()`, `TC.status()`, `TC.downloadMarkdown()` and `TC.downloadHTML()`.
 
-- Message count looks plausible for the meeting length.
-- The first message is genuinely the start of the conversation.
-  If it begins mid-meeting, the top didn't load — scroll higher and re-capture.
-- Spot-check a reply-quote: it should render as a `>` blockquote with the quoted author + time, followed by the reply.
-
-## Troubleshooting
-
-- **Very few messages / missing the beginning** → truncated capture; the list wasn't scrolled to both ends.
-  Re-capture.
-- **Run-together text like `Name 09/07/2026 09:49 quoted text reply text`** → the reply-quote markup changed; check the `quoted-reply-card` mapping below.
-- **Raw HTML tags or `&amp;` in the output** → the parser fell back; check the content anchor below.
-
-## How the DOM maps to output (for fixing if Teams changes)
-
-Each of these is a stable `data-tid` / `id` the tool relies on.
-`<ts>` is the message's epoch-ms id, the join key across an author/timestamp/content triple.
-
-| Output element        | Source anchor |
-|-----------------------|---------------|
-| Message body text     | element with `data-message-content=""` and `id="content-<ts>"` |
-| Author name           | `id="author-<ts>"` (`data-tid="message-author-name"`) |
-| Timestamp             | `<time id="timestamp-<ts>" datetime="…Z">` — `datetime` is UTC, text is local |
-| Reply-quote           | `data-tid="quoted-reply-card"` → author span + `quoted-reply-timestamp` + `quoted-reply-preview-content` (**preview is truncated with `…`** — Teams does not store the full quoted text) |
-| Reactions             | `data-tid="diverse-reaction-pill-button"` → emoji is the `<img alt>`, count is the leading number in its text |
-| Emoji (inline)        | `<img alt="😀">` — rendered as the alt character |
-| System / control note | `id="content-control-message-<ts>"` (e.g. "Meeting started", "named the meeting X") |
-| Virtualization        | `virtual-list-loader` / `vl-placeholders` — the reason you must scroll both ends |
-
-## Output format
+## What the Markdown contains
 
 ```
 # <Meeting name>
 
-**Date:** … · **Messages:** N · **Participants:** M
+- **Date:** 9 November 2026
+- **Messages:** 47
+- **Participants:** …
 
----
+## Monday 9 November 2026
 
-*07 Jul 08:23 — Chat has been turned on for this meeting.*   ← system notices in italics
+*14:59 — Meeting started*                                  ← system notices in italics
 
-**Author** · 09:27
+**Author** · 15:44 · edited
 
-Message text, with [links](https://…) and emoji 🙂 preserved.
+Message text, with **formatting**, [links](https://…), lists and emoji 🙂 preserved.
 
-> **Quoted Author** · 09:49: the quoted message (truncated…)
+> **Quoted Author** · 15:40: the quoted message (truncated…)
 
 The reply to that quote.
 
 _Reactions: ❤️ 4 · 👍 2_
 ```
+
+- The title is the meeting's name, from its "X named the meeting Y" notice, or otherwise the chat's name from the tab title.
+- A `## date` heading starts each day, so a chat that runs over weeks stays readable; times are in your browser's time zone, as Teams shows them.
+- Quoted replies are previews: Teams only keeps a *truncated* copy of the quoted message (ending in `…`), but the full original is in the log as its own message.
+- File attachments appear as links to the file; inline images, which need a Teams login to view, as `*(image)*`.
+
+## Converting a saved HTML capture
+
+The converter needs no browser, only a DOM, so HTML saved with **Download captured chat HTML** (or a full-page dump of Teams) can be turned into Markdown with Node and [linkedom](https://github.com/WebReflection/linkedom), since the userscript exports its converter when `require`d:
+
+```sh
+npm install linkedom
+node -e 'const { parseHTML } = require("linkedom"), fs = require("fs");
+  process.stdout.write(require("./teams-chat-to-markdown.user.js").toMarkdown(parseHTML(fs.readFileSync("chat.html", "utf8")).document).markdown)' > chat.md
+```
+
+Times come out in Node's time zone; set `TZ` (e.g. `TZ=Europe/London`) to match the Teams client.
+
+## How the DOM maps to output (for fixing if Teams changes)
+
+The script relies only on stable `data-tid` / `id` / `data-mid` attributes, never on Teams' generated CSS class names.
+`<ts>` is the message's epoch-ms id, the join key across a message's parts.
+
+| Output element        | Source anchor |
+|-----------------------|---------------|
+| Message list          | `data-tid="message-pane-list-runway"` (`id="chat-pane-list"`); each direct child is one row |
+| Message id / time     | `data-mid="<ts>"` on the message body; the time is that epoch-ms in local time |
+| Message body text     | `id="content-<ts>"` (`data-message-content`) |
+| Author name           | `id="author-<ts>"`; a message without one inherits the previous author |
+| Edited marker         | `id="edited-<ts>"` |
+| Reply-quote           | `data-tid="quoted-reply-card"` → author span + `quoted-reply-timestamp` + `quoted-reply-preview-content` |
+| Reactions             | `data-tid="diverse-reaction-pill-button"` → emoji is the `<img alt>`, count is the leading number in its text |
+| Emoji (inline)        | `<img alt="😀">`, rendered as the alt character |
+| @mention              | a `<div data-mention-type="person">` inside the paragraph, kept inline |
+| System / control note | `id="content-control-message-<ts>"`; its leading "Yesterday 14:59" is dropped for the time from `<ts>` |
+| Still loading         | `data-testid="vl-placeholders"` with a height — the scroll back waits longer while it shows |
